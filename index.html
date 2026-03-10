@@ -3,1063 +3,372 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trimble Connect Topics Dashboard</title>
-
-    <!-- Chart.js for visualizations -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
-    <!-- Trimble Connect Workspace API - CORRECT LIBRARY URL -->
+    <title>Trimble Connect Interactive Topics Dashboard</title>
+    
+    <!-- Trimble Connect Workspace API -->
     <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
-
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: #f5f7fa;
-            color: #333;
-            min-height: 100vh;
-        }
-
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-
-        /* Header */
-        .header {
-            background: linear-gradient(135deg, #005F9E 0%, #0077C8 100%);
-            color: white;
-            padding: 20px 24px;
-            border-radius: 12px;
-            margin-bottom: 24px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 4px 12px rgba(0, 95, 158, 0.3);
-        }
-
-        .header h1 {
-            font-size: 24px;
-            font-weight: 600;
-        }
-
-        .header .project-name {
-            font-size: 14px;
-            opacity: 0.9;
-            margin-top: 4px;
-        }
-
-        .refresh-btn {
-            background: rgba(255, 255, 255, 0.2);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            color: white;
-            padding: 10px 20px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.2s;
-        }
-
-        .refresh-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-
-        /* Filters */
-        .filters {
-            background: white;
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 24px;
-            display: flex;
-            gap: 16px;
-            flex-wrap: wrap;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-        }
-
-        .filter-group {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-
-        .filter-group label {
-            font-size: 12px;
-            font-weight: 600;
-            color: #666;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .filter-group select {
-            padding: 10px 16px;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            font-size: 14px;
-            min-width: 180px;
-            background: white;
-            cursor: pointer;
-            transition: border-color 0.2s;
-        }
-
-        .filter-group select:focus {
-            outline: none;
-            border-color: #0077C8;
-        }
-
-        .reset-btn {
-            background: #f5f7fa;
-            border: 1px solid #e0e0e0;
-            color: #666;
-            padding: 10px 20px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            align-self: flex-end;
-            transition: all 0.2s;
-        }
-
-        .reset-btn:hover {
-            background: #e8ecf0;
-        }
-
-        /* Stats Cards */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 24px;
-        }
-
-        .stat-card {
-            background: white;
-            padding: 24px;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-        }
-
-        .stat-card .label {
-            font-size: 13px;
-            color: #666;
-            margin-bottom: 8px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .stat-card .value {
-            font-size: 36px;
-            font-weight: 700;
-            color: #005F9E;
-        }
-
-        .stat-card.critical .value {
-            color: #dc3545;
-        }
-
-        .stat-card.open .value {
-            color: #28a745;
-        }
-
-        /* Charts */
-        .charts-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 24px;
-            margin-bottom: 24px;
-        }
-
-        .chart-card {
-            background: white;
-            padding: 24px;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-        }
-
-        .chart-card h3 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 20px;
-        }
-
-        .chart-container {
-            position: relative;
-            height: 280px;
-        }
-
-        /* Topics Table */
-        .table-card {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-            overflow: hidden;
-        }
-
-        .table-card h3 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #333;
-            padding: 20px 24px;
-            border-bottom: 1px solid #e8ecf0;
-        }
-
-        .topics-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .topics-table th {
-            background: #f8fafc;
-            padding: 14px 20px;
-            text-align: left;
-            font-size: 12px;
-            font-weight: 600;
-            color: #666;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            border-bottom: 1px solid #e8ecf0;
-        }
-
-        .topics-table td {
-            padding: 16px 20px;
-            border-bottom: 1px solid #f0f2f5;
-            font-size: 14px;
-        }
-
-        .topics-table tr:hover {
-            background: #f8fafc;
-        }
-
-        .topics-table .topic-id {
-            font-weight: 600;
-            color: #005F9E;
-        }
-
-        .topics-table .topic-title {
-            max-width: 300px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-
-        .tag-badge {
-            display: inline-block;
-            padding: 2px 8px;
-            background: #e8ecf0;
-            border-radius: 4px;
-            font-size: 11px;
-            color: #555;
-            margin-right: 4px;
-            margin-bottom: 2px;
-        }
-
-        /* Loader */
+        body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f9fafb; margin: 0; padding: 20px; color: #1f2937; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        
+        .header { text-align: center; margin-bottom: 20px; }
+        .header h1 { margin: 0; font-size: 28px; color: #111827; }
+        .header p { color: #6b7280; margin-top: 5px; }
+        
+        /* Loader styles */
         #loader {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 400px;
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.95); z-index: 9999;
+            display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;
         }
+        .spinner { border: 4px solid #f3f4f6; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        .spinner {
-            width: 50px;
-            height: 50px;
-            border: 4px solid #e8ecf0;
-            border-top-color: #005F9E;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
+        .filter-panel { background: #ffffff; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-end; }
+        .filter-group { display: flex; flex-direction: column; flex: 1; min-width: 160px; }
+        .filter-group label { font-size: 12px; font-weight: 600; color: #4b5563; margin-bottom: 5px; text-transform: uppercase; }
+        .filter-group select { padding: 10px 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; outline: none; width: 100%; background-color: #f9fafb; cursor: pointer; height: 42px; }
+        .reset-btn { background-color: #ef4444; color: white; border: none; border-radius: 6px; padding: 0 20px; height: 42px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+        .reset-btn:hover { background-color: #dc2626; }
+        .button-group { flex: 0 0 auto; }
 
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
+        .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+        .card { background: #ffffff; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); padding: 20px; }
+        .card-title { font-size: 16px; font-weight: 600; margin-bottom: 15px; color: #374151; border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; }
+        .full-width { grid-column: span 2; }
+        .chart-container { position: relative; height: 300px; width: 100%; }
 
-        #loader h3 {
-            margin-top: 20px;
-            color: #666;
-        }
+        .table-container { overflow-x: auto; max-height: 400px; }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th, td { padding: 12px 15px; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
+        th { background-color: #f3f4f6; position: sticky; top: 0; }
+        .badge { padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: white; white-space: nowrap; }
+        .tag-badge { display: inline-block; padding: 3px 6px; background-color: #e5e7eb; color: #4b5563; border-radius: 4px; font-size: 11px; margin: 2px; }
 
-        #main-content {
-            display: none;
-        }
-
-        /* Error State */
-        .error-message {
-            background: #fff5f5;
-            border: 1px solid #ffcccc;
-            color: #cc0000;
-            padding: 20px;
-            border-radius: 12px;
-            text-align: center;
-            margin: 40px auto;
-            max-width: 500px;
-        }
-
-        .error-message h3 {
-            margin-bottom: 10px;
-        }
-
-        /* Connection Status */
-        .connection-status {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            color: #666;
-        }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #ccc;
-        }
-
-        .status-dot.connected {
-            background: #28a745;
-        }
-
-        .status-dot.connecting {
-            background: #ffc107;
-            animation: pulse 1s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        @media (max-width: 768px) {
-            .filters {
-                flex-direction: column;
-            }
-
-            .filter-group select {
-                min-width: 100%;
-            }
-
-            .charts-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .topics-table {
-                display: block;
-                overflow-x: auto;
-            }
-        }
+        @media (max-width: 768px) { .dashboard { grid-template-columns: 1fr; } .full-width { grid-column: span 1; } }
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
+
+    <!-- Loading Screen -->
+    <div id="loader">
+        <div class="spinner"></div>
+        <h3 style="color: #374151; margin: 0;">Loading Project Dashboard...</h3>
+        <p id="loader-text" style="color: #6b7280; font-size: 14px; margin-top: 8px;">Initialiserer Trimble Connect...</p>
+    </div>
+
+    <div class="container" style="display: none;" id="main-content">
         <div class="header">
-            <div>
-                <h1>Topics Dashboard</h1>
-                <div class="project-name" id="project-title">Loading project...</div>
-            </div>
-            <div style="display: flex; align-items: center; gap: 16px;">
-                <div class="connection-status">
-                    <div class="status-dot" id="status-dot"></div>
-                    <span id="status-text">Connecting...</span>
-                </div>
-                <button id="refreshBtn" class="refresh-btn" onclick="refreshData()">Refresh Data</button>
-            </div>
+            <h1 id="project-title">Interactive Topics Dashboard</h1>
+            <p>Live Trimble Connect BCF Data Integration</p>
         </div>
 
-        <!-- Error message -->
-        <div id="error" style="display:none; background: #fff5f5; border: 1px solid #ffcccc; color: #cc0000; padding: 12px; border-radius: 8px; margin-bottom: 12px;"></div>
-
-        <!-- Loader -->
-        <div id="loader">
-            <div class="spinner"></div>
-            <h3>Connecting to Trimble Connect...</h3>
+        <!-- Filter Controls -->
+        <div class="filter-panel">
+            <div class="filter-group"><label>Assignee</label><select id="assigneeFilter" onchange="applyFilters()"><option value="All">All Assignees</option></select></div>
+            <div class="filter-group"><label>Status</label><select id="statusFilter" onchange="applyFilters()"><option value="All">All Statuses</option></select></div>
+            <div class="filter-group"><label>Priority</label><select id="priorityFilter" onchange="applyFilters()"><option value="All">All Priorities</option></select></div>
+            <div class="filter-group"><label>Tags / Fag</label><select id="tagFilter" onchange="applyFilters()"><option value="All">All Tags</option></select></div>
+            <div class="filter-group button-group"><button class="reset-btn" onclick="resetFilters()">Reset Filters</button></div>
         </div>
 
-        <!-- Main Content -->
-        <div id="main-content">
-            <!-- Filters -->
-            <div class="filters">
-                <div class="filter-group">
-                    <label>Assignee</label>
-                    <select id="assigneeFilter" onchange="applyFilters()">
-                        <option value="All">All Assignees</option>
-                    </select>
+        <div class="dashboard">
+            <div class="card"><div class="card-title">Status Distribution</div><div class="chart-container"><canvas id="statusChart"></canvas></div></div>
+            <div class="card"><div class="card-title">Priority Levels</div><div class="chart-container"><canvas id="priorityChart"></canvas></div></div>
+            <div class="card full-width"><div class="card-title">Workload by Assignee</div><div class="chart-container" style="height: 350px;"><canvas id="assigneeChart"></canvas></div></div>
+            <div class="card full-width">
+                <div class="card-title">Matching Issues (<span id="issueCount">0</span>)</div>
+                <div class="table-container">
+                    <table id="issueTable">
+                        <thead><tr><th>Title / ID</th><th>Assignee</th><th>Status</th><th>Priority</th><th>Tags</th></tr></thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
                 </div>
-                <div class="filter-group">
-                    <label>Status</label>
-                    <select id="statusFilter" onchange="applyFilters()">
-                        <option value="All">All Statuses</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>Priority</label>
-                    <select id="priorityFilter" onchange="applyFilters()">
-                        <option value="All">All Priorities</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>Tag</label>
-                    <select id="tagFilter" onchange="applyFilters()">
-                        <option value="All">All Tags</option>
-                    </select>
-                </div>
-                <button class="reset-btn" onclick="resetFilters()">Reset Filters</button>
-            </div>
-
-            <!-- Stats -->
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="label">Total Topics</div>
-                    <div class="value" id="totalCount">0</div>
-                </div>
-                <div class="stat-card open">
-                    <div class="label">Open</div>
-                    <div class="value" id="openCount">0</div>
-                </div>
-                <div class="stat-card critical">
-                    <div class="label">Critical Priority</div>
-                    <div class="value" id="criticalCount">0</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">With Assignee</div>
-                    <div class="value" id="assignedCount">0</div>
-                </div>
-            </div>
-
-            <!-- Charts -->
-            <div class="charts-grid">
-                <div class="chart-card">
-                    <h3>Status Distribution</h3>
-                    <div class="chart-container">
-                        <canvas id="statusChart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-card">
-                    <h3>Priority Distribution</h3>
-                    <div class="chart-container">
-                        <canvas id="priorityChart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-card">
-                    <h3>Topics by Assignee</h3>
-                    <div class="chart-container">
-                        <canvas id="assigneeChart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-card">
-                    <h3>Topics by Type</h3>
-                    <div class="chart-container">
-                        <canvas id="typeChart"></canvas>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Topics Table -->
-            <div class="table-card">
-                <h3>All Topics</h3>
-                <table class="topics-table">
-                    <thead>
-                        <tr>
-                            <th>Topic</th>
-                            <th>Assignee</th>
-                            <th>Status</th>
-                            <th>Priority</th>
-                            <th>Type</th>
-                            <th>Tags</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tableBody">
-                    </tbody>
-                </table>
             </div>
         </div>
     </div>
 
     <script>
-        // Global variables
-        let rawData = [];
-        let statusChart, priorityChart, assigneeChart, typeChart;
-        let allAssignees = [], allStatuses = [], allPriorities = [], allTags = [], allTypes = [];
-        let api = null;
-        let accessToken = null;
-        let currentProjectId = null;
+        const TOPICS_API_BASE = "https://open21.connect.trimble.com";
+        let API = null, accessToken = null, currentProjectId = null;
+        
+        let rawData =[];
+        let statusChart, priorityChart, assigneeChart;
+        let allAssignees = [], allStatuses = [], allPriorities = [], allTags =[];
 
-        // API Base URL - Will be determined dynamically based on project region
-        let TOPICS_API_BASE = null;
-
-        // Color palette
+        // Colors mapped to typical Trimble/BCF statuses
         const colorPalette = {
-            'Open': '#28a745',
-            'Closed': '#6c757d',
-            'In Progress': '#007bff',
-            'Resolved': '#17a2b8',
-            'New': '#6610f2',
-            'Active': '#007bff',
-            'High': '#dc3545',
-            'Medium': '#ffc107',
-            'Low': '#28a745',
-            'Normal': '#17a2b8',
-            'Critical': '#dc3545',
-            'Urgent': '#fd7e14',
-            'Unassigned': '#6c757d'
+            'New': '#3b82f6', 'Open': '#3b82f6', 'Active': '#3b82f6',
+            'In Progress': '#f59e0b', 'Assigned': '#f59e0b',
+            'Done': '#10b981', 'Resolved': '#10b981', 'Ready': '#10b981', 'Closed': '#6b7280', 
+            'Normal': '#6366f1', 'Low': '#9ca3af', 'High': '#ef4444', 'Critical': '#b91c1c'
         };
+        const fallbackColors =['#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4'];
+        let colorIndex = 0;
 
-        // Get color for status/priority
         function getColor(key) {
-            return colorPalette[key] || '#005F9E';
+            if (!key) return '#d1d5db';
+            if (colorPalette[key]) return colorPalette[key];
+            colorPalette[key] = fallbackColors[colorIndex % fallbackColors.length];
+            colorIndex++;
+            return colorPalette[key];
         }
 
-        // Handle access token payload - matching the working code
-        function handleAccessTokenPayload(payload) {
-            if (!payload) return;
-
-            if (typeof payload === 'string') {
-                if (payload === 'pending' || payload === 'denied') return;
-                accessToken = payload;
-                refreshData();
-                return;
-            }
-
-            if (typeof payload === 'object') {
-                if (payload.status === 'denied') {
-                    setError('Access to accessToken was denied in Trimble Connect settings.');
-                    setStatus('Cannot fetch BCF Topics without accessToken.');
-                } else if (payload.accessToken) {
-                    accessToken = payload.accessToken;
-                    refreshData();
-                }
-            }
+        function setLoaderText(text) {
+            document.getElementById('loader-text').innerText = text;
         }
 
-        // Set status message
-        function setStatus(message, isLoading = false) {
-            const el = document.getElementById('status-text');
-            if (el) {
-                el.innerHTML = isLoading ? `<span class="loading-spinner"></span>${message}` : message;
-            }
+        // --- Robust Tag Extractor from Edin's code ---
+        function extractTags(topic){
+            const candidates =[];
+            if(Array.isArray(topic.labels)) candidates.push(...topic.labels);
+            if(Array.isArray(topic.tags)) candidates.push(...topic.tags);
+            const single = topic.label || topic.tag || topic.discipline;
+            if(single) candidates.push(single);
+            return [...new Set(candidates.filter(Boolean))];
         }
 
-        // Set error message
-        function setError(message) {
-            const el = document.getElementById('error');
-            if (el) {
-                el.textContent = message || '';
-            }
-        }
-
-        // Set busy state
-        function setBusy(isBusy) {
-            document.getElementById('refreshBtn').disabled = isBusy;
-        }
-
-        /**
-         * Get the correct API endpoint based on project region
-         */
-        async function getApiBaseUrl() {
+        // ==========================================
+        // 1. TRIMBLE CONNECT WORKSPACE API & AUTH 
+        // ==========================================
+        async function init() {
+            setLoaderText("Kobler til Trimble Connect Workspace...");
             try {
-                // First try to get regions from the main API
-                const regionsResp = await fetch('https://api.trimble.com/connect/regions', {
-                    method: 'GET',
-                    headers: { 'Accept': 'application/json' }
+                API = await TrimbleConnectWorkspace.connect(window.parent, (event, args) => {
+                    if (event === "extension.accessToken") handleAccessTokenPayload(args.data);
                 });
 
-                if (regionsResp.ok) {
-                    const regions = await regionsResp.json();
-                    // Find the BCF endpoint from regions
-                    for (const region of regions) {
-                        if (region.services && region.services.topics) {
-                            return region.services.topics;
-                        }
-                    }
-                }
-            } catch (e) {
-                console.log('Could not fetch regions:', e);
-            }
-
-            // Fallback - try different regional endpoints
-            const possibleEndpoints = [
-                'https://open21.connect.trimble.com',  // US
-                'https://bcf.connect.trimble.com',       // Generic
-                'https://open eu.connect.trimble.com'   // EU (尝试)
-            ];
-
-            // Return the first one that works - will be overridden after we get the token
-            return possibleEndpoints[0];
-        }
-
-        /**
-         * TRIMBLE CONNECT INTEGRATION - FIXED VERSION (matching working code)
-         */
-        async function initExtension() {
-            setStatus('Connecting to Trimble Connect...', true);
-            setError('');
-
-            try {
-                // Connect to Trimble Connect - Using the correct method from working code
-                api = await TrimbleConnectWorkspace.connect(window.parent, (event, args) => {
-                    if (event === 'extension.accessToken') {
-                        handleAccessTokenPayload(args.data);
-                    }
-                });
-
-                // Get current project
-                const projectInfo = await api.project.getCurrentProject();
+                const projectInfo = await API.project.getCurrentProject();
                 currentProjectId = projectInfo.id;
+                document.getElementById('project-title').innerText = `Live BCF Dashboard: ${projectInfo.name || 'Project'}`;
 
-                document.getElementById('project-title').innerText = projectInfo.name || 'Trimble Connect Project';
-
-                // Try to get the correct API endpoint based on project location
-                // Based on console output showing "Project location: europe" and "PROD EU"
-                // Try the EU endpoint first
-                TOPICS_API_BASE = "https://bcf.connect.trimble.com";
-
-                // Try EU-specific endpoint
-                try {
-                    const testResp = await fetch(`${TOPICS_API_BASE}/health`, {
-                        method: 'HEAD',
-                        mode: 'cors'
-                    });
-                    console.log('BCF endpoint test:', testResp.status);
-                } catch (e) {
-                    console.log('BCF endpoint not accessible directly, will use with token');
-                }
-
-                setStatus('Requesting access token permission...', true);
-
-                // Request access token permission
-                const permissionResult = await api.extension.requestPermission('accesstoken');
+                setLoaderText("Ber om tilgang til accessToken...");
+                const permissionResult = await API.extension.requestPermission("accesstoken");
                 handleAccessTokenPayload(permissionResult);
 
-                if (permissionResult === 'pending') {
-                    setStatus('Waiting for user to approve access...', true);
-                } else if (permissionResult === 'denied') {
-                    setError('Access to accessToken was denied in Trimble Connect settings.');
-                    setStatus('Cannot fetch BCF Topics without accessToken.');
-                } else if (typeof permissionResult === 'string') {
-                    accessToken = permissionResult;
-                    await refreshData();
-                } else if (permissionResult && permissionResult.accessToken) {
-                    accessToken = permissionResult.accessToken;
-                    await refreshData();
-                } else {
-                    setStatus('Waiting for accessToken...', true);
-                }
-
-            } catch (error) {
-                console.error('Initialization failed:', error);
-                setError('Failed to connect to Trimble Connect Workspace API: ' + (error.message || error));
-                setStatus('Error during initialization.');
-            }
-        }
-
-        // Update connection status UI
-        function updateConnectionStatus(status, text) {
-            const dot = document.getElementById('status-dot');
-            const textEl = document.getElementById('status-text');
-
-            if (dot && textEl) {
-                dot.className = 'status-dot ' + status;
-                textEl.innerText = text;
-            }
-        }
-
-        /**
-         * Fetch topics from Trimble Connect BCF API - Using correct endpoint from working code
-         */
-        async function fetchTopics(projectId) {
-            if (!accessToken) throw new Error('Missing accessToken - could not fetch Topics.');
-
-            // Try different endpoints to find the one that works
-            const endpoints = [
-                'https://bcf.connect.trimble.com',
-                'https://open21.connect.trimble.com'
-            ];
-
-            let lastError = null;
-
-            for (const baseUrl of endpoints) {
-                try {
-                    const url = `${baseUrl}/bcf/3.0/projects/${encodeURIComponent(projectId)}/topics`;
-                    console.log('Trying BCF endpoint:', url);
-
-                    const resp = await fetch(url, {
-                        method: 'GET',
-                        headers: {
-                            'Authorization': `Bearer ${accessToken}`,
-                            'Accept': 'application/json'
-                        }
-                    });
-
-                    if (resp.ok) {
-                        const json = await resp.json();
-                        console.log('Success! Got topics from:', baseUrl);
-                        return Array.isArray(json) ? json : [];
-                    } else {
-                        console.log(`Endpoint ${baseUrl} returned ${resp.status}`);
-                        lastError = `HTTP ${resp.status}`;
-                    }
-                } catch (e) {
-                    console.log(`Endpoint ${baseUrl} failed:`, e.message);
-                    lastError = e.message;
-                }
-            }
-
-            throw new Error(`All BCF endpoints failed. Last error: ${lastError}`);
-        }
-
-        /**
-         * Refresh data - Updated to match working code
-         */
-        async function refreshData() {
-            setBusy(true);
-            setError('');
-            setStatus('Fetching BCF Topics...', true);
-
-            try {
-                rawData = await fetchTopics(currentProjectId);
-
-                if (!rawData.length) {
-                    setError('No topics found. This project may not have any BCF topics yet.');
-                    setStatus('No data.');
-                    return;
-                }
-
-                processData();
-                setStatus(`Last updated: ${new Date().toLocaleString()} | Topics: ${rawData.length}`);
             } catch (err) {
                 console.error(err);
-                setError('Error fetching Topics: ' + (err.message || err));
-                setStatus('Ready, but error during last update.');
-            } finally {
-                setBusy(false);
+                setLoaderText("Feil ved tilkobling til Trimble Connect: " + (err.message || err));
             }
         }
 
-        /**
-         * Refresh data - Legacy function for compatibility
-         */
-        async function fetchTrimbleTopics(projectId) {
-            try {
-                rawData = await fetchTopics(projectId);
-
-                if (!rawData || rawData.length === 0) {
-                    document.getElementById('loader').innerHTML = `
-                        <div class="error-message">
-                            <h3>No Topics Found</h3>
-                            <p>This project has no BCF topics yet, or the API returned empty results.</p>
-                        </div>
-                    `;
-                    return;
-                }
-
-                processData();
-                document.getElementById('loader').style.display = 'none';
-                document.getElementById('main-content').style.display = 'block';
-
-            } catch (error) {
-                console.error('Fetch Error:', error);
-                document.querySelector('#loader h3').innerText = 'Failed to load topics: ' + error.message;
-            }
-        }
-
-        /**
-         * Show CORS workaround message
-         */
-        function showCORSWorkaround() {
-            document.getElementById('loader').innerHTML = `
-                <div class="error-message" style="border-color: #ffc107; background: #fffbf0; color: #856404;">
-                    <h3>CORS Policy Restriction</h3>
-                    <p>Direct API calls are blocked by Trimble Connect's CORS policy when running as an extension.</p>
-                    <button class="refresh-btn" onclick="loadMockData()" style="margin-top: 16px; background: #28a745;">
-                        Load Demo Data
-                    </button>
-                </div>
-            `;
-        }
-
-        /**
-         * Process topics data
-         */
-        function processTopicsData(topics) {
-            if (!topics || topics.length === 0) {
-                document.getElementById('loader').innerHTML = `
-                    <div class="error-message">
-                        <h3>No Topics Found</h3>
-                        <p>This project has no BCF topics yet, or the API returned empty results.</p>
-                    </div>
-                `;
+        function handleAccessTokenPayload(payload) {
+            if (!payload) return;
+            
+            if (typeof payload === "string") {
+                if (payload === "pending" || payload === "denied") return;
+                accessToken = payload;
+                fetchAndRenderData();
                 return;
             }
 
-            rawData = topics.map(topic => ({
-                id: topic.index || (topic.guid ? topic.guid.substring(0, 8) : 'N/A'),
-                guid: topic.guid,
-                title: topic.title || 'Untitled',
-                status: topic.topic_status || 'Open',
-                priority: topic.priority || 'Normal',
-                type: topic.topic_type || 'Issue',
-                assignee: topic.assigned_to || 'Unassigned',
-                tags: topic.labels || [],
-                creationDate: topic.creation_date,
-                modifiedDate: topic.modification_date
-            }));
-
-            console.log('Processed topics:', rawData.length);
-            processData();
-            document.getElementById('loader').style.display = 'none';
-            document.getElementById('main-content').style.display = 'block';
+            if (typeof payload === "object") {
+                if (payload.status === "denied") {
+                    setLoaderText("Tilgang til accessToken ble avslått i Trimble Connect.");
+                } else if (payload.accessToken) {
+                    accessToken = payload.accessToken;
+                    fetchAndRenderData();
+                }
+            }
         }
 
-        /**
-         * DATA PROCESSING & FILTERS
-         */
-        function processData() {
-            // Extract unique values
-            allAssignees = [...new Set(rawData.map(i => i.assignee))].sort();
-            allStatuses = [...new Set(rawData.map(i => i.status))].sort();
-            allPriorities = [...new Set(rawData.map(i => i.priority))].sort();
-            allTypes = [...new Set(rawData.map(i => i.type))].sort();
+        // ==========================================
+        // 2. FETCH DATA FROM TRIMBLE
+        // ==========================================
+        async function fetchAndRenderData() {
+            setLoaderText("Henter BCF Topics fra server...");
+            try {
+                const url = `${TOPICS_API_BASE}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics`;
+                const resp = await fetch(url, {
+                    method: "GET",
+                    headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
+                });
 
-            let tagSet = new Set();
-            rawData.forEach(i => i.tags.forEach(t => tagSet.add(t)));
-            allTags = [...tagSet].sort();
+                if (!resp.ok) {
+                    throw new Error(`Topics API-feil (${resp.status}): ${await resp.text()}`);
+                }
 
-            // Populate dropdowns
-            populateDropdown('assigneeFilter', allAssignees);
-            populateDropdown('statusFilter', allStatuses);
-            populateDropdown('priorityFilter', allPriorities);
-            populateDropdown('tagFilter', allTags);
+                const json = await resp.json();
+                
+                // Map the JSON exactly to our dashboard data format
+                rawData = (Array.isArray(json) ? json :[]).map(topic => ({
+                    id: topic.title || topic.topic_title || topic.guid || topic.topic_guid || 'No Title',
+                    assignee: topic.assigned_to || 'Unassigned',
+                    status: topic.topic_status || topic.status || 'Open',
+                    priority: topic.priority || 'Normal',
+                    tags: extractTags(topic)
+                }));
 
-            // Apply initial filters
+                // Initialize the interactive dashboard
+                initDashboardUI();
+
+            } catch (err) {
+                console.error(err);
+                setLoaderText("Feil ved henting av Topics: " + (err.message || err));
+            }
+        }
+
+        // ==========================================
+        // 3. DASHBOARD RENDERING & LOGIC
+        // ==========================================
+        function initDashboardUI() {
+            // Extract unique dynamic values
+            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort();
+            allStatuses =[...new Set(rawData.map(i => i.status))].sort();
+            allPriorities =[...new Set(rawData.map(i => i.priority))].sort();
+            allTags =[...new Set(rawData.flatMap(i => i.tags))].sort();
+
+            populateSelect('assigneeFilter', allAssignees);
+            populateSelect('statusFilter', allStatuses);
+            populateSelect('priorityFilter', allPriorities);
+            populateSelect('tagFilter', allTags);
+
+            // Hide loader, show UI
+            document.getElementById('loader').style.display = 'none';
+            document.getElementById('main-content').style.display = 'block';
+
+            initCharts();
             applyFilters();
         }
 
-        function populateDropdown(id, items) {
+        function populateSelect(id, items) {
             const select = document.getElementById(id);
-            const currentVal = select.value;
-            select.innerHTML = `<option value="All">All ${id.replace('Filter', '')}s</option>`;
-            items.forEach(item => {
-                const opt = document.createElement('option');
-                opt.value = item;
-                opt.innerText = item;
-                select.appendChild(opt);
+            // Clear existing options except "All"
+            select.innerHTML = select.options[0].outerHTML;
+            items.forEach(item => { 
+                const opt = document.createElement('option'); 
+                opt.value = item; 
+                opt.textContent = item; 
+                select.appendChild(opt); 
             });
-            select.value = currentVal;
         }
 
-        function applyFilters() {
-            const fAssignee = document.getElementById('assigneeFilter').value;
-            const fStatus = document.getElementById('statusFilter').value;
-            const fPriority = document.getElementById('priorityFilter').value;
-            const fTag = document.getElementById('tagFilter').value;
+        const handleChartHover = (event, elements) => { event.native.target.style.cursor = elements.length ? 'pointer' : 'default'; };
 
-            const filtered = rawData.filter(i => {
-                return (fAssignee === 'All' || i.assignee === fAssignee) &&
-                       (fStatus === 'All' || i.status === fStatus) &&
-                       (fPriority === 'All' || i.priority === fPriority) &&
-                       (fTag === 'All' || i.tags.includes(fTag));
+        function initCharts() {
+            const chartOptions = (filterId) => ({
+                responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } },
+                onClick: (event, elements, chart) => {
+                    if (elements.length > 0) {
+                        const label = chart.data.labels[elements[0].index];
+                        const select = document.getElementById(filterId);
+                        select.value = select.value === label ? 'All' : label;
+                        applyFilters();
+                    }
+                },
+                onHover: handleChartHover
             });
 
-            updateDashboard(filtered);
+            statusChart = new Chart(document.getElementById('statusChart').getContext('2d'), {
+                type: 'doughnut', data: { labels: allStatuses, datasets:[{ data: [], backgroundColor: allStatuses.map(getColor) }] },
+                options: chartOptions('statusFilter')
+            });
+
+            priorityChart = new Chart(document.getElementById('priorityChart').getContext('2d'), {
+                type: 'pie', data: { labels: allPriorities, datasets: [{ data: [], backgroundColor: allPriorities.map(getColor) }] },
+                options: chartOptions('priorityFilter')
+            });
+
+            const datasets = allStatuses.map(status => ({ label: status, data:[], backgroundColor: getColor(status) }));
+            assigneeChart = new Chart(document.getElementById('assigneeChart').getContext('2d'), {
+                type: 'bar', data: { labels: allAssignees, datasets: datasets },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } },
+                    plugins: { tooltip: { mode: 'index', intersect: false } },
+                    onClick: (event, elements) => {
+                        if (elements.length > 0) {
+                            const label = assigneeChart.data.labels[elements[0].index];
+                            const select = document.getElementById('assigneeFilter');
+                            select.value = select.value === label ? 'All' : label;
+                            applyFilters();
+                        }
+                    },
+                    onHover: handleChartHover
+                }
+            });
         }
 
         function resetFilters() {
-            document.querySelectorAll('.filter-group select').forEach(s => s.value = 'All');
+            ['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All');
             applyFilters();
         }
 
-        function updateDashboard(data) {
-            // Update stats
-            document.getElementById('totalCount').innerText = data.length;
-            document.getElementById('openCount').innerText = data.filter(i => i.status === 'Open' || i.status === 'New' || i.status === 'In Progress').length;
-            document.getElementById('criticalCount').innerText = data.filter(i => i.priority === 'Critical' || i.priority === 'Urgent' || i.priority === 'High').length;
-            document.getElementById('assignedCount').innerText = data.filter(i => i.assignee && i.assignee !== 'Unassigned').length;
+        function applyFilters() {
+            const filters = {
+                assignee: document.getElementById('assigneeFilter').value,
+                status: document.getElementById('statusFilter').value,
+                priority: document.getElementById('priorityFilter').value,
+                tag: document.getElementById('tagFilter').value
+            };
 
-            // Render components
-            renderTable(data);
-            renderCharts(data);
+            // Highlight Active Dropdowns
+            Object.keys(filters).forEach(key => {
+                const el = document.getElementById(key + 'Filter');
+                if (filters[key] !== 'All') { el.style.borderColor = '#3b82f6'; el.style.backgroundColor = '#eff6ff'; el.style.fontWeight = '600'; } 
+                else { el.style.borderColor = '#d1d5db'; el.style.backgroundColor = '#f9fafb'; el.style.fontWeight = '400'; }
+            });
+
+            // Filter Dataset
+            const filteredData = rawData.filter(issue => {
+                return (filters.assignee === 'All' || issue.assignee === filters.assignee) &&
+                       (filters.status === 'All' || issue.status === filters.status) &&
+                       (filters.priority === 'All' || issue.priority === filters.priority) &&
+                       (filters.tag === 'All' || issue.tags.includes(filters.tag));
+            });
+
+            updateCharts(filteredData);
+            updateTable(filteredData);
         }
 
-        function renderTable(data) {
-            const tbody = document.getElementById('tableBody');
+        function updateCharts(data) {
+            let statusCounts = {}, priorityCounts = {}, assigneeCounts = {};
+            allStatuses.forEach(s => statusCounts[s] = 0);
+            allPriorities.forEach(p => priorityCounts[p] = 0);
+            allAssignees.forEach(a => { assigneeCounts[a] = {}; allStatuses.forEach(s => assigneeCounts[a][s] = 0); });
 
-            if (data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: #999;">No topics found</td></tr>';
+            data.forEach(issue => {
+                statusCounts[issue.status]++;
+                priorityCounts[issue.priority]++;
+                assigneeCounts[issue.assignee][issue.status]++;
+            });
+
+            statusChart.data.datasets[0].data = allStatuses.map(s => statusCounts[s]); statusChart.update();
+            priorityChart.data.datasets[0].data = allPriorities.map(p => priorityCounts[p]); priorityChart.update();
+
+            allStatuses.forEach((status, index) => { assigneeChart.data.datasets[index].data = allAssignees.map(a => assigneeCounts[a][status]); });
+            assigneeChart.update();
+        }
+
+        function updateTable(data) {
+            const tbody = document.getElementById('tableBody');
+            document.getElementById('issueCount').textContent = data.length;
+            tbody.innerHTML = ''; 
+
+            if(data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 20px;">No issues match your current filters.</td></tr>';
                 return;
             }
 
-            tbody.innerHTML = data.slice(0, 100).map(i => `
-                <tr>
-                    <td>
-                        <span class="topic-id">#${i.id}</span><br>
-                        <span class="topic-title" title="${i.title}">${i.title}</span>
-                    </td>
-                    <td>${i.assignee}</td>
-                    <td><span class="badge" style="background: ${getColor(i.status)}">${i.status}</span></td>
-                    <td><span class="badge" style="background: ${getColor(i.priority)}">${i.priority}</span></td>
-                    <td>${i.type}</td>
-                    <td>${i.tags.map(t => `<span class="tag-badge">${t}</span>`).join('')}</td>
-                </tr>
-            `).join('');
-        }
-
-        function renderCharts(data) {
-            const statusCounts = {};
-            const priorityCounts = {};
-            const assigneeCounts = {};
-            const typeCounts = {};
-
-            data.forEach(i => {
-                statusCounts[i.status] = (statusCounts[i.status] || 0) + 1;
-                priorityCounts[i.priority] = (priorityCounts[i.priority] || 0) + 1;
-                assigneeCounts[i.assignee] = (assigneeCounts[i.assignee] || 0) + 1;
-                typeCounts[i.type] = (typeCounts[i.type] || 0) + 1;
-            });
-
-            // Destroy existing charts
-            if (statusChart) statusChart.destroy();
-            if (priorityChart) priorityChart.destroy();
-            if (assigneeChart) assigneeChart.destroy();
-            if (typeChart) typeChart.destroy();
-
-            // Status Chart
-            statusChart = new Chart(document.getElementById('statusChart'), {
-                type: 'doughnut',
-                data: {
-                    labels: Object.keys(statusCounts),
-                    datasets: [{
-                        data: Object.values(statusCounts),
-                        backgroundColor: Object.keys(statusCounts).map(getColor)
-                    }]
-                },
-                options: {
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'right'
-                        }
-                    }
-                }
-            });
-
-            // Priority Chart
-            priorityChart = new Chart(document.getElementById('priorityChart'), {
-                type: 'pie',
-                data: {
-                    labels: Object.keys(priorityCounts),
-                    datasets: [{
-                        data: Object.values(priorityCounts),
-                        backgroundColor: Object.keys(priorityCounts).map(getColor)
-                    }]
-                },
-                options: {
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'right'
-                        }
-                    }
-                }
-            });
-
-            // Assignee Chart
-            const assigneeLabels = Object.keys(assigneeCounts).slice(0, 10);
-            const assigneeData = assigneeLabels.map(k => assigneeCounts[k]);
-
-            assigneeChart = new Chart(document.getElementById('assigneeChart'), {
-                type: 'bar',
-                data: {
-                    labels: assigneeLabels,
-                    datasets: [{
-                        label: 'Topics',
-                        data: assigneeData,
-                        backgroundColor: '#005F9E'
-                    }]
-                },
-                options: {
-                    maintainAspectRatio: false,
-                    indexAxis: 'y',
-                    plugins: {
-                        legend: {
-                            display: false
-                        }
-                    }
-                }
-            });
-
-            // Type Chart
-            typeChart = new Chart(document.getElementById('typeChart'), {
-                type: 'bar',
-                data: {
-                    labels: Object.keys(typeCounts),
-                    datasets: [{
-                        label: 'Topics',
-                        data: Object.values(typeCounts),
-                        backgroundColor: Object.keys(typeCounts).map((_, i) =>
-                            ['#005F9E', '#28a745', '#dc3545', '#ffc107', '#17a2b8'][i % 5]
-                        )
-                    }]
-                },
-                options: {
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            display: false
-                        }
-                    }
-                }
+            data.forEach(issue => {
+                const tr = document.createElement('tr');
+                const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${tag}</span>`).join('');
+                tr.innerHTML = `
+                    <td style="font-weight:600; color:#374151;">${issue.id}</td>
+                    <td>${issue.assignee}</td>
+                    <td><span class="badge" style="background-color: ${getColor(issue.status)}">${issue.status}</span></td>
+                    <td><span class="badge" style="background-color: ${getColor(issue.priority)}">${issue.priority}</span></td>
+                    <td>${tagsHtml}</td>
+                `;
+                tbody.appendChild(tr);
             });
         }
 
-        /**
-         * Mock data for development/testing
-         */
-        function loadMockData() {
-            console.log('Loading mock data for development...');
-
-            rawData = [
-                { id: '1', title: 'Structural beam clash detected', status: 'Open', priority: 'High', type: 'Clash', assignee: 'John Smith', tags: ['Structural', 'Urgent'] },
-                { id: '2', title: 'MEP coordination review needed', status: 'In Progress', priority: 'Medium', type: 'Issue', assignee: 'Jane Doe', tags: ['MEP', 'Review'] },
-                { id: '3', title: 'Update floor finishes specification', status: 'New', priority: 'Low', type: 'Request', assignee: 'Unassigned', tags: ['Architecture'] },
-                { id: '4', title: 'Critical safety issue - exit route', status: 'Open', priority: 'Critical', type: 'Safety', assignee: 'Mike Johnson', tags: ['Safety', 'Urgent'] },
-                { id: '5', title: 'HVAC duct routing conflict', status: 'Resolved', priority: 'Medium', type: 'Clash', assignee: 'Sarah Wilson', tags: ['MEP', 'HVAC'] },
-                { id: '6', title: 'Foundation detail clarification', status: 'Open', priority: 'Normal', type: 'Question', assignee: 'John Smith', tags: ['Structural', 'Foundation'] },
-                { id: '7', title: 'Fire rating specification missing', status: 'Open', priority: 'High', type: 'Issue', assignee: 'Jane Doe', tags: ['Fire', 'Specification'] },
-                { id: '8', title: 'Door schedule update required', status: 'Closed', priority: 'Low', type: 'Task', assignee: 'Unassigned', tags: ['Architecture', 'Doors'] },
-                { id: '9', title: 'Elevator pit waterproofing', status: 'In Progress', priority: 'High', type: 'Issue', assignee: 'Mike Johnson', tags: ['Structural', 'Waterproofing'] },
-                { id: '10', title: 'Kitchen exhaust layout', status: 'New', priority: 'Medium', type: 'Design', assignee: 'Sarah Wilson', tags: ['MEP', 'Kitchen'] }
-            ];
-
-            document.getElementById('project-title').innerText = 'Demo Project (Development Mode)';
-            updateConnectionStatus('connected', 'Demo Mode');
-
-            processData();
-            document.getElementById('loader').style.display = 'none';
-            document.getElementById('main-content').style.display = 'block';
-        }
-
-        // Initialize on load
-        window.onload = initExtension;
+        // Start everything on load
+        window.onload = init;
     </script>
 </body>
 </html>
