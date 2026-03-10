@@ -4,60 +4,41 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trimble Connect Topics Dashboard</title>
+    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Trimble Connect Workspace API -->
+    <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
+    
     <style>
-        body {
-            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background-color: #f9fafb;
-            margin: 0;
-            padding: 20px;
-            color: #1f2937;
-        }
+        body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f9fafb; margin: 0; padding: 20px; color: #1f2937; }
         .container { max-width: 1200px; margin: 0 auto; }
         
-        /* Header */
         .header { text-align: center; margin-bottom: 20px; }
         .header h1 { margin: 0; font-size: 28px; color: #111827; }
         .header p { color: #6b7280; margin-top: 5px; }
         
-        /* Loading Overlay */
         #loader {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(255, 255, 255, 0.9); z-index: 9999;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background: rgba(255, 255, 255, 0.95); z-index: 9999;
+            display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;
         }
-        .spinner {
-            border: 4px solid #f3f4f6; border-top: 4px solid #3b82f6;
-            border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite;
-        }
+        .spinner { border: 4px solid #f3f4f6; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        /* Filter Panel */
-        .filter-panel {
-            background: #ffffff; border-radius: 10px; padding: 20px; margin-bottom: 20px;
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-end;
-        }
+        .filter-panel { background: #ffffff; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-end; }
         .filter-group { display: flex; flex-direction: column; flex: 1; min-width: 160px; }
         .filter-group label { font-size: 12px; font-weight: 600; color: #4b5563; margin-bottom: 5px; text-transform: uppercase; }
-        .filter-group select {
-            padding: 10px 15px; border: 1px solid #d1d5db; border-radius: 6px;
-            font-size: 14px; outline: none; width: 100%; background-color: #f9fafb; cursor: pointer; height: 42px;
-        }
-        .reset-btn {
-            background-color: #ef4444; color: white; border: none; border-radius: 6px;
-            padding: 0 20px; height: 42px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
-        }
+        .filter-group select { padding: 10px 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; outline: none; width: 100%; background-color: #f9fafb; cursor: pointer; height: 42px; }
+        .reset-btn { background-color: #ef4444; color: white; border: none; border-radius: 6px; padding: 0 20px; height: 42px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
         .reset-btn:hover { background-color: #dc2626; }
         .button-group { flex: 0 0 auto; }
 
-        /* Dashboard Layout */
         .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
         .card { background: #ffffff; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); padding: 20px; }
         .card-title { font-size: 16px; font-weight: 600; margin-bottom: 15px; color: #374151; border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; }
         .full-width { grid-column: span 2; }
         .chart-container { position: relative; height: 300px; width: 100%; }
 
-        /* Table */
         .table-container { overflow-x: auto; max-height: 400px; }
         table { width: 100%; border-collapse: collapse; text-align: left; }
         th, td { padding: 12px 15px; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
@@ -65,10 +46,7 @@
         .badge { padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: white; white-space: nowrap; }
         .tag-badge { display: inline-block; padding: 3px 6px; background-color: #e5e7eb; color: #4b5563; border-radius: 4px; font-size: 11px; margin: 2px; }
 
-        @media (max-width: 768px) {
-            .dashboard { grid-template-columns: 1fr; }
-            .full-width { grid-column: span 1; }
-        }
+        @media (max-width: 768px) { .dashboard { grid-template-columns: 1fr; } .full-width { grid-column: span 1; } }
     </style>
 </head>
 <body>
@@ -76,8 +54,8 @@
     <!-- Loading Screen -->
     <div id="loader">
         <div class="spinner"></div>
-        <h3 style="color: #374151; margin-top: 15px;">Loading Project Topics...</h3>
-        <p style="color: #6b7280; font-size: 14px;">Connecting to Trimble API</p>
+        <h3 style="color: #374151; margin-top: 15px;">Loading Topics...</h3>
+        <p id="loader-text" style="color: #6b7280; font-size: 14px;">Connecting to Trimble API</p>
     </div>
 
     <div class="container" style="display: none;" id="main-content">
@@ -116,12 +94,11 @@
         let statusChart, priorityChart, assigneeChart;
         let allAssignees = [], allStatuses = [], allPriorities = [], allTags =[];
 
-        // Dynamic Color Palette for unknown statuses/priorities
+        // Colors
         const colorPalette = {
             'New': '#3b82f6', 'Open': '#3b82f6', 'Active': '#3b82f6',
             'In Progress': '#f59e0b', 'Assigned': '#f59e0b',
-            'Done': '#10b981', 'Resolved': '#10b981', 'Ready': '#10b981',
-            'Closed': '#6b7280', 'Rejected': '#6b7280',
+            'Done': '#10b981', 'Resolved': '#10b981', 'Ready': '#10b981', 'Closed': '#6b7280', 
             'Normal': '#6366f1', 'Low': '#9ca3af', 'High': '#ef4444', 'Critical': '#b91c1c'
         };
         const fallbackColors =['#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4'];
@@ -136,46 +113,72 @@
         }
 
         // ==========================================
-        // TRIMBLE CONNECT API INTEGRATION
+        // TRIMBLE CONNECT WORKSPACE API
         // ==========================================
         async function fetchTrimbleTopics() {
             try {
-                // Check URL for Trimble Connect environment tokens (standard Extension method)
-                const urlParams = new URLSearchParams(window.location.search);
-                const projectId = urlParams.get('projectId');
-                const token = urlParams.get('token'); 
+                let token = null;
+                let projectId = null;
+                const loaderText = document.getElementById('loader-text');
+                
+                // 1. Initialize API Connection
+                loaderText.innerText = "Connecting to Workspace...";
+                const connectPromise = WorkspaceAPI.connect(window.parent, (event, args) => {
+                    if (event === 'extension.accessToken') token = args;
+                });
+                
+                // Fallback timeout (if opened directly via URL outside of TC)
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('API Timeout')), 4000));
+                const api = await Promise.race([connectPromise, timeoutPromise]);
 
-                if (projectId && token) {
-                    // We are inside Trimble Connect! Fetch live BCF Topics.
-                    document.getElementById('project-title').innerText = "Live Project Topics";
-                    
-                    const response = await fetch(`https://bcf.connect.trimble.com/bcf/3.0/projects/${projectId}/topics`, {
-                        headers: { 'Authorization': `Bearer ${token}` }
+                // 2. Fetch Project Context
+                const project = await api.project.getProject();
+                projectId = project.id;
+                document.getElementById('project-title').innerText = "Live Project Topics";
+
+                // 3. Request Access Token
+                loaderText.innerText = "Authenticating...";
+                let permission = await api.extension.requestPermission('accesstoken');
+                if (permission && permission !== 'pending' && permission !== 'denied') {
+                    token = permission;
+                } else {
+                    // Wait if permission is pending via event listener
+                    await new Promise(resolve => {
+                        let checks = 0;
+                        let intv = setInterval(() => { if (token || checks > 15) { clearInterval(intv); resolve(); } checks++; }, 500);
                     });
-                    
-                    if (response.ok) {
-                        const bcfData = await response.json();
-                        // Map Trimble BCF Data to our Dashboard Format
-                        rawData = bcfData.map(topic => ({
-                            id: topic.title || topic.guid,
-                            assignee: topic.assigned_to || 'Unassigned',
-                            status: topic.topic_status || 'Open',
-                            priority: topic.priority || 'Normal',
-                            tags: topic.labels ||[]
-                        }));
-                        return;
-                    }
                 }
-                throw new Error("Local/Testing mode fallback");
+                
+                if (!token) throw new Error("Permission Denied or Timeout");
+
+                // 4. Fetch the real BCF Topics Data
+                loaderText.innerText = "Fetching BCF Topics...";
+                const response = await fetch(`https://bcf.connect.trimble.com/bcf/3.0/projects/${projectId}/topics`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (response.ok) {
+                    const bcfData = await response.json();
+                    rawData = bcfData.map(topic => ({
+                        id: topic.title || topic.guid,
+                        assignee: topic.assigned_to || 'Unassigned',
+                        status: topic.topic_status || 'Open',
+                        priority: topic.priority || 'Normal',
+                        tags: topic.labels ||[]
+                    }));
+                    return; // Success!
+                } else {
+                    throw new Error(`BCF API error: ${response.status}`);
+                }
             } catch (error) {
-                console.log("Loading mock data (Not inside active TC session).", error);
-                // Fallback Mock Data so the dashboard works locally outside of TC
+                console.warn("Could not load from Trimble API. Falling back to Mock Data.", error);
+                document.getElementById('project-title').innerText = "Testing Mode (Mock Data)";
                 rawData =[
-                    { id: 'FREFE-45 - TFG#02 ortofoto', assignee: 'Henrik Lien', status: 'Resolved', priority: 'Normal', tags:['TFG#02'] },
-                    { id: 'FREFE-46 - Kulvert', assignee: 'Siv Hansen', status: 'Open', priority: 'High', tags: ['TFG#02'] },
-                    { id: 'FREFE-47 - Skråningsutslag', assignee: 'Øivind Skullerud', status: 'Open', priority: 'Normal', tags: ['TFG#02'] },
-                    { id: 'FREFE-54 - Fyllinger vest', assignee: 'Jonas Lindgård', status: 'Closed', priority: 'Normal', tags:['TFG#02'] },
-                    { id: 'FREFE-55 - Skjæring', assignee: 'Kristoffer Weaver', status: 'Resolved', priority: 'Critical', tags:['TFG#02', '#BIM'] }
+                    { id: 'FREFE-45 - TFG#02 ortofoto', assignee: 'Henrik Lien', status: 'Done', priority: 'Normal', tags:['TFG#02'] },
+                    { id: 'FREFE-46 - Kulvert', assignee: 'Siv Hansen Dawes', status: 'New', priority: 'High', tags: ['TFG#02'] },
+                    { id: 'FREFE-47 - Skråningsutslag', assignee: 'Øivind Skullerud', status: 'New', priority: 'Normal', tags: ['TFG#02'] },
+                    { id: 'FREFE-54 - Fyllinger vest', assignee: 'Jonas R. Lindgård', status: 'Done', priority: 'Normal', tags: ['TFG#02'] },
+                    { id: 'FREFE-55 - Skjæring', assignee: 'Kristoffer B. Weaver', status: 'Done', priority: 'Normal', tags: ['TFG#02', '#BIM'] }
                 ];
             }
         }
@@ -186,19 +189,16 @@
         async function init() {
             await fetchTrimbleTopics();
 
-            // Extract unique dynamic attributes from the fetched data
-            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort();
-            allStatuses =[...new Set(rawData.map(i => i.status))].sort();
-            allPriorities =[...new Set(rawData.map(i => i.priority))].sort();
+            allAssignees = [...new Set(rawData.map(i => i.assignee))].sort();
+            allStatuses = [...new Set(rawData.map(i => i.status))].sort();
+            allPriorities = [...new Set(rawData.map(i => i.priority))].sort();
             allTags =[...new Set(rawData.flatMap(i => i.tags))].sort();
 
-            // Populate Dropdowns Dynamically
             populateSelect('assigneeFilter', allAssignees);
             populateSelect('statusFilter', allStatuses);
             populateSelect('priorityFilter', allPriorities);
             populateSelect('tagFilter', allTags);
 
-            // Hide Loader and show Dashboard
             document.getElementById('loader').style.display = 'none';
             document.getElementById('main-content').style.display = 'block';
 
@@ -208,11 +208,7 @@
 
         function populateSelect(id, items) {
             const select = document.getElementById(id);
-            items.forEach(item => {
-                const opt = document.createElement('option');
-                opt.value = item; opt.textContent = item;
-                select.appendChild(opt);
-            });
+            items.forEach(item => { const opt = document.createElement('option'); opt.value = item; opt.textContent = item; select.appendChild(opt); });
         }
 
         const handleChartHover = (event, elements) => { event.native.target.style.cursor = elements.length ? 'pointer' : 'default'; };
@@ -231,19 +227,16 @@
                 onHover: handleChartHover
             });
 
-            // Status Chart
             statusChart = new Chart(document.getElementById('statusChart').getContext('2d'), {
-                type: 'doughnut', data: { labels: allStatuses, datasets: [{ data: [], backgroundColor: allStatuses.map(getColor) }] },
+                type: 'doughnut', data: { labels: allStatuses, datasets:[{ data: [], backgroundColor: allStatuses.map(getColor) }] },
                 options: chartOptions('statusFilter')
             });
 
-            // Priority Chart
             priorityChart = new Chart(document.getElementById('priorityChart').getContext('2d'), {
-                type: 'pie', data: { labels: allPriorities, datasets:[{ data: [], backgroundColor: allPriorities.map(getColor) }] },
+                type: 'pie', data: { labels: allPriorities, datasets: [{ data: [], backgroundColor: allPriorities.map(getColor) }] },
                 options: chartOptions('priorityFilter')
             });
 
-            // Assignee Chart (Dynamic Datasets based on Statuses)
             const datasets = allStatuses.map(status => ({ label: status, data:[], backgroundColor: getColor(status) }));
             assigneeChart = new Chart(document.getElementById('assigneeChart').getContext('2d'), {
                 type: 'bar', data: { labels: allAssignees, datasets: datasets },
@@ -264,8 +257,7 @@
             });
         }
 
-        function resetFilters() {
-            ['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All');
+        function resetFilters() {['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All');
             applyFilters();
         }
 
@@ -277,17 +269,12 @@
                 tag: document.getElementById('tagFilter').value
             };
 
-            // Highlight Active Filters
             Object.keys(filters).forEach(key => {
                 const el = document.getElementById(key + 'Filter');
-                if (filters[key] !== 'All') {
-                    el.style.borderColor = '#3b82f6'; el.style.backgroundColor = '#eff6ff'; el.style.fontWeight = '600';
-                } else {
-                    el.style.borderColor = '#d1d5db'; el.style.backgroundColor = '#f9fafb'; el.style.fontWeight = '400';
-                }
+                if (filters[key] !== 'All') { el.style.borderColor = '#3b82f6'; el.style.backgroundColor = '#eff6ff'; el.style.fontWeight = '600'; } 
+                else { el.style.borderColor = '#d1d5db'; el.style.backgroundColor = '#f9fafb'; el.style.fontWeight = '400'; }
             });
 
-            // Filter Data
             const filteredData = rawData.filter(issue => {
                 return (filters.assignee === 'All' || issue.assignee === filters.assignee) &&
                        (filters.status === 'All' || issue.status === filters.status) &&
@@ -314,9 +301,7 @@
             statusChart.data.datasets[0].data = allStatuses.map(s => statusCounts[s]); statusChart.update();
             priorityChart.data.datasets[0].data = allPriorities.map(p => priorityCounts[p]); priorityChart.update();
 
-            allStatuses.forEach((status, index) => {
-                assigneeChart.data.datasets[index].data = allAssignees.map(a => assigneeCounts[a][status]);
-            });
+            allStatuses.forEach((status, index) => { assigneeChart.data.datasets[index].data = allAssignees.map(a => assigneeCounts[a][status]); });
             assigneeChart.update();
         }
 
