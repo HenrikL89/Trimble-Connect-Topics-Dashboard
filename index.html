@@ -48,6 +48,10 @@
         th { background-color: #f3f4f6; position: sticky; top: 0; z-index: 10; }
         .badge { padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: white; white-space: nowrap; }
         .tag-badge { display: inline-block; padding: 3px 6px; background-color: #e5e7eb; color: #4b5563; border-radius: 4px; font-size: 11px; margin: 2px; }
+        
+        /* Hyperlink styling for table issues */
+        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-block; }
+        .issue-link:hover { text-decoration: underline; color: #2563eb; }
 
         @media (max-width: 768px) { .dashboard { grid-template-columns: 1fr; } .full-width { grid-column: span 1; } }
     </style>
@@ -94,7 +98,7 @@
     </div>
 
     <script>
-        // SMART BCF ENDPOINTS (Tries multiple until one succeeds)
+        // SMART BCF ENDPOINTS
         const BCF_ENDPOINTS =[
             "https://open21.connect.trimble.com",
             "https://bcf.eu.connect.trimble.com",
@@ -191,7 +195,7 @@
         }
 
         // ==========================================
-        // 2. SMART FETCH DATA (Tries endpoints until success)
+        // 2. SMART FETCH DATA 
         // ==========================================
         async function fetchDataWithSmartFallback() {
             setLoaderText("Henter BCF Topics fra server...");
@@ -209,14 +213,13 @@
 
                     if (resp.ok) {
                         const json = await resp.json();
-                        // Safely extract array regardless of API wrapper
                         if (Array.isArray(json)) fetchedArray = json;
                         else if (json && Array.isArray(json.topics)) fetchedArray = json.topics;
                         else if (json && Array.isArray(json.value)) fetchedArray = json.value;
                         else fetchedArray =[]; 
                         
                         console.log(`Suksess! Hentet data fra: ${base}`);
-                        break; // Stop trying endpoints once successful
+                        break; 
                     }
                 } catch (err) {
                     console.warn(`Endpoint feilet: ${base}`, err);
@@ -237,17 +240,20 @@
         function processDataSafely(bcfArray) {
             setLoaderText("Prosesserer og bygger dashboard...");
             
-            // Map the JSON safely
             rawData = bcfArray.map(topic => {
                 
                 // Formats the assignee name: strips the email domain if present
                 let assigneeName = topic.assigned_to || 'Ikke tildelt';
                 if (assigneeName.includes('@')) {
-                    assigneeName = assigneeName.split('@')[0]; // Gets everything before the '@'
+                    assigneeName = assigneeName.split('@')[0];
                 }
 
+                // Gets the unique identifier for the specific Topic
+                const guid = topic.guid || topic.topic_guid || topic.id || '';
+
                 return {
-                    id: topic.title || topic.topic_title || topic.guid || topic.topic_guid || 'Uten tittel',
+                    id: topic.title || topic.topic_title || guid || 'Uten tittel',
+                    guid: guid,
                     assignee: assigneeName,
                     status: topic.topic_status || topic.status || 'Open',
                     priority: topic.priority || 'Normal',
@@ -255,7 +261,7 @@
                 };
             });
 
-            // Extract unique dynamic values safely (Defaults to empty arrays)
+            // Extract unique values securely
             allAssignees =[...new Set(rawData.map(i => i.assignee))].sort() || [];
             allStatuses =[...new Set(rawData.map(i => i.status))].sort() ||[];
             allPriorities =[...new Set(rawData.map(i => i.priority))].sort() ||[];
@@ -266,7 +272,6 @@
             populateSelect('priorityFilter', allPriorities);
             populateSelect('tagFilter', allTags);
 
-            // Hide loader, show UI
             document.getElementById('loader').style.display = 'none';
             document.getElementById('main-content').style.display = 'block';
 
@@ -277,7 +282,7 @@
         function populateSelect(id, items) {
             const select = document.getElementById(id);
             if (!select) return;
-            select.innerHTML = select.options[0].outerHTML; // Keep the "All" option
+            select.innerHTML = select.options[0].outerHTML;
             items.forEach(item => { 
                 const opt = document.createElement('option'); 
                 opt.value = item; 
@@ -289,7 +294,6 @@
         const handleChartHover = (event, elements) => { event.native.target.style.cursor = elements.length ? 'pointer' : 'default'; };
 
         function initCharts() {
-            // Destroy existing charts to prevent memory leaks if re-rendering
             if(statusChart) statusChart.destroy();
             if(priorityChart) priorityChart.destroy();
             if(assigneeChart) assigneeChart.destroy();
@@ -349,14 +353,12 @@
                 tag: document.getElementById('tagFilter').value
             };
 
-            // Highlight Active Dropdowns
             Object.keys(filters).forEach(key => {
                 const el = document.getElementById(key + 'Filter');
                 if (filters[key] !== 'All') { el.style.borderColor = '#3b82f6'; el.style.backgroundColor = '#eff6ff'; el.style.fontWeight = '600'; } 
                 else { el.style.borderColor = '#d1d5db'; el.style.backgroundColor = '#f9fafb'; el.style.fontWeight = '400'; }
             });
 
-            // Filter Dataset
             const filteredData = rawData.filter(issue => {
                 return (filters.assignee === 'All' || issue.assignee === filters.assignee) &&
                        (filters.status === 'All' || issue.status === filters.status) &&
@@ -371,7 +373,6 @@
         function updateCharts(data) {
             let statusCounts = {}, priorityCounts = {}, assigneeCounts = {};
             
-            // Initialize counts securely
             allStatuses.forEach(s => statusCounts[s] = 0);
             allPriorities.forEach(p => priorityCounts[p] = 0);
             allAssignees.forEach(a => { 
@@ -414,8 +415,16 @@
             data.forEach(issue => {
                 const tr = document.createElement('tr');
                 const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${tag}</span>`).join('');
+                
+                // Deep link generated for Trimble Connect Web
+                const topicUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/topics/${issue.guid}`;
+
                 tr.innerHTML = `
-                    <td style="font-weight:600; color:#374151;">${issue.id}</td>
+                    <td>
+                        <a href="${topicUrl}" target="_blank" class="issue-link" title="Åpne i Trimble Connect">
+                            ${issue.id}
+                        </a>
+                    </td>
                     <td>${issue.assignee}</td>
                     <td><span class="badge" style="background-color: ${getColor(issue.status)}">${issue.status}</span></td>
                     <td><span class="badge" style="background-color: ${getColor(issue.priority)}">${issue.priority}</span></td>
