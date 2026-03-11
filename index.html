@@ -25,6 +25,7 @@
             display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;
         }
         .spinner { border: 4px solid #f3f4f6; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
+        .spinner-small { border: 2px solid #cbd5e1; border-top: 2px solid #3b82f6; border-radius: 50%; width: 12px; height: 12px; animation: spin 1s linear infinite; display: inline-block; vertical-align: middle; margin-right: 6px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         #error-log { color: #ef4444; font-size: 14px; margin-top: 10px; max-width: 600px; word-wrap: break-word; }
 
@@ -50,7 +51,7 @@
         .tag-badge { display: inline-block; padding: 3px 6px; background-color: #e5e7eb; color: #4b5563; border-radius: 4px; font-size: 11px; margin: 2px; }
         
         /* Deep Link Styling */
-        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
+        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
         .issue-link:hover { text-decoration: underline; color: #2563eb; }
         .link-icon { font-size: 12px; }
 
@@ -99,6 +100,7 @@
     </div>
 
     <script>
+        // SMART BCF ENDPOINTS
         const BCF_ENDPOINTS =[
             "https://open21.connect.trimble.com",
             "https://bcf.eu.connect.trimble.com",
@@ -107,10 +109,13 @@
         ];
 
         let API = null, accessToken = null, currentProjectId = null;
+        let activeEndpoint = "https://open21.connect.trimble.com"; // Gets updated during fetch
+        
         let rawData =[];
         let statusChart = null, priorityChart = null, assigneeChart = null;
-        let allAssignees =[], allStatuses =[], allPriorities = [], allTags =[];
+        let allAssignees =[], allStatuses = [], allPriorities =[], allTags =[];
 
+        // Colors
         const colorPalette = {
             'New': '#3b82f6', 'Open': '#3b82f6', 'Active': '#3b82f6',
             'In Progress': '#f59e0b', 'Assigned': '#f59e0b',
@@ -145,6 +150,9 @@
             return[...new Set(candidates.map(s => String(s).trim()).filter(Boolean))];
         }
 
+        // ==========================================
+        // 1. TRIMBLE CONNECT WORKSPACE API
+        // ==========================================
         async function init() {
             setLoaderText("Kobler til Trimble Connect Workspace...");
             try {
@@ -169,6 +177,9 @@
             if (accessToken) fetchDataWithSmartFallback();
         }
 
+        // ==========================================
+        // 2. SMART FETCH DATA 
+        // ==========================================
         async function fetchDataWithSmartFallback() {
             setLoaderText("Henter BCF Topics fra server...");
             let fetchedArray = null;
@@ -180,6 +191,7 @@
                     const resp = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" } });
 
                     if (resp.ok) {
+                        activeEndpoint = base; // Save the working endpoint so the 3D loader knows where to fetch viewpoints from
                         const json = await resp.json();
                         if (Array.isArray(json)) fetchedArray = json;
                         else if (json && Array.isArray(json.topics)) fetchedArray = json.topics;
@@ -194,6 +206,9 @@
             processDataSafely(fetchedArray);
         }
 
+        // ==========================================
+        // 3. SAFE DATA PARSING & DASHBOARD INIT
+        // ==========================================
         function processDataSafely(bcfArray) {
             setLoaderText("Prosesserer og bygger dashboard...");
             
@@ -328,6 +343,74 @@
             assigneeChart.update();
         }
 
+        // ==========================================
+        // 4. ADVANCED 3D MODEL LOADER FUNCTION
+        // ==========================================
+        window.openTopicIn3D = async function(event, topicGuid) {
+            event.preventDefault();
+            const linkEl = event.currentTarget;
+            const originalHtml = linkEl.innerHTML;
+            
+            // Visual feedback so user knows data is being fetched
+            linkEl.innerHTML = `<span class="spinner-small"></span> Laster 3D...`;
+            linkEl.style.pointerEvents = "none";
+
+            try {
+                let modelIds =[];
+                
+                // 1. Fetch viewpoints for the topic
+                const vpResp = await fetch(`${activeEndpoint}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics/${encodeURIComponent(topicGuid)}/viewpoints`, {
+                    headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
+                });
+                
+                if (vpResp.ok) {
+                    const viewpoints = await vpResp.json();
+                    if (viewpoints && viewpoints.length > 0) {
+                        // Grab the first viewpoint to find out which models were active
+                        const firstVpId = viewpoints[0].guid || viewpoints[0].id;
+                        
+                        // 2. Fetch specific viewpoint details
+                        const detailResp = await fetch(`${activeEndpoint}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics/${encodeURIComponent(topicGuid)}/viewpoints/${encodeURIComponent(firstVpId)}`, {
+                            headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
+                        });
+                        
+                        if (detailResp.ok) {
+                            const vpDetail = await detailResp.json();
+                            
+                            // 3. Extract model IDs
+                            const modelsArray = (vpDetail.viewpoint && vpDetail.viewpoint.models) ? vpDetail.viewpoint.models : 
+                                                (vpDetail.models ? vpDetail.models :[]);
+                                                
+                            modelsArray.forEach(m => {
+                                const mid = m.model_id || m.modelId || m.id;
+                                if (mid) modelIds.push(mid);
+                            });
+                        }
+                    }
+                }
+
+                // 4. Construct Final Deep Link with Model IDs included
+                const uniqueModels = [...new Set(modelIds)];
+                let finalUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${topicGuid}`;
+                
+                if (uniqueModels.length > 0) {
+                    finalUrl += `&modelId=${uniqueModels.join(',')}`;
+                }
+                
+                // Open new tab
+                window.open(finalUrl, '_blank');
+
+            } catch (err) {
+                console.error("Kunne ikke hente modeller for viewpoint:", err);
+                // Fallback: Open standard topic link if fetch fails
+                window.open(`https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${topicGuid}`, '_blank');
+            } finally {
+                // Restore link text
+                linkEl.innerHTML = originalHtml;
+                linkEl.style.pointerEvents = "auto";
+            }
+        };
+
         function updateTable(data) {
             const tbody = document.getElementById('tableBody');
             document.getElementById('issueCount').textContent = data.length;
@@ -341,13 +424,10 @@
             data.forEach(issue => {
                 const tr = document.createElement('tr');
                 const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
-                
-                // Using "todoId" forces Trimble Connect's 3D viewer to automatically load the attached models.
-                const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?todoId=${issue.guid}`;
 
                 tr.innerHTML = `
                     <td>
-                        <a href="${topic3dUrl}" target="_blank" class="issue-link" title="Åpne i 3D Viewer (Trimble Connect)">
+                        <a href="#" onclick="openTopicIn3D(event, '${escapeHtml(issue.guid)}')" class="issue-link" title="Åpne i 3D Viewer (laster modeller automatisk)">
                             ${escapeHtml(issue.id)}
                             <span class="link-icon">↗</span>
                         </a>
