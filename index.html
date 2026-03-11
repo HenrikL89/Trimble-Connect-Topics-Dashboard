@@ -342,8 +342,8 @@
                 const tr = document.createElement('tr');
                 const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
                 
-                // Deep link generated for Trimble Connect 3D Viewer
-                const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
+                // Using "todoId" forces Trimble Connect's 3D viewer to automatically load the attached models.
+                const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?todoId=${issue.guid}`;
 
                 tr.innerHTML = `
                     <td>
