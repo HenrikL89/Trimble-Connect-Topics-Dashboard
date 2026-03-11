@@ -226,7 +226,7 @@
                 };
             });
 
-            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort() || [];
+            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort() ||[];
             allStatuses =[...new Set(rawData.map(i => i.status))].sort() ||[];
             allPriorities =[...new Set(rawData.map(i => i.priority))].sort() ||[];
             allTags =[...new Set(rawData.flatMap(i => i.tags))].sort() ||[];
@@ -343,7 +343,32 @@
         }
 
         // ==========================================
-        // 4. ADVANCED 3D VIEW & MODEL LOADER
+        // 4. DEEP SEARCH FOR TRIMBLE VIEW ID
+        // ==========================================
+        function findTrimbleViewId(obj) {
+            if (!obj || typeof obj !== 'object') return null;
+            
+            // Check known keys where Trimble hides the short View ID (like Vudl_eKrqx0)
+            const keys =['viewId', 'view_id', 'trimble_view_id', 'trimbleViewId'];
+            for (let k of keys) {
+                // View IDs are usually short (11 chars) and don't have hyphens unlike GUIDs
+                if (typeof obj[k] === 'string' && obj[k].length > 5 && obj[k].length < 25 && !obj[k].includes('-')) {
+                    return obj[k];
+                }
+            }
+            
+            // Recursively search the JSON object
+            for (let key in obj) {
+                if (typeof obj[key] === 'object') {
+                    let res = findTrimbleViewId(obj[key]);
+                    if (res) return res;
+                }
+            }
+            return null;
+        }
+
+        // ==========================================
+        // 5. ADVANCED 3D VIEW & MODEL LOADER
         // ==========================================
         window.openTopicIn3D = async function(event, topicGuid) {
             event.preventDefault();
@@ -351,13 +376,13 @@
             const originalHtml = linkEl.innerHTML;
             
             // Visual feedback so user knows data is being fetched
-            linkEl.innerHTML = `<span class="spinner-small"></span> Laster view...`;
+            linkEl.innerHTML = `<span class="spinner-small"></span> Laster kamera/modeller...`;
             linkEl.style.pointerEvents = "none";
 
             try {
+                let trimbleViewId = null;
+                let bcfViewpointId = null;
                 let modelIds =[];
-                let firstVpId = null;
-                let shortViewId = null; // Sometimes Trimble uses internal short-IDs for Views (like Vudl_eKrqx0)
                 
                 // 1. Fetch viewpoints for the topic
                 const vpResp = await fetch(`${activeEndpoint}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics/${encodeURIComponent(topicGuid)}/viewpoints`, {
@@ -370,55 +395,50 @@
                         
                         // Grab the default viewpoint (or the first one if no default)
                         const vp = viewpoints.find(v => v.default) || viewpoints[0];
-                        firstVpId = vp.guid || vp.id;
-                        
-                        // Pre-check if Trimble saved their short viewId in the extensions
-                        if (vp.extensions && vp.extensions.viewId) shortViewId = vp.extensions.viewId;
-                        if (vp.extensions && vp.extensions.trimble_view_id) shortViewId = vp.extensions.trimble_view_id;
+                        bcfViewpointId = vp.guid || vp.id;
+                        trimbleViewId = findTrimbleViewId(vp);
 
-                        // 2. Fetch specific viewpoint details
-                        const detailResp = await fetch(`${activeEndpoint}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics/${encodeURIComponent(topicGuid)}/viewpoints/${encodeURIComponent(firstVpId)}`, {
-                            headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
-                        });
-                        
-                        if (detailResp.ok) {
-                            const vpDetail = await detailResp.json();
-                            
-                            // Check details for the short view ID just in case it's here
-                            if (!shortViewId) {
-                                if (vpDetail.extensions && vpDetail.extensions.viewId) shortViewId = vpDetail.extensions.viewId;
-                                if (vpDetail.extensions && vpDetail.extensions.trimble_view_id) shortViewId = vpDetail.extensions.trimble_view_id;
-                                if (vpDetail.viewId) shortViewId = vpDetail.viewId;
-                            }
-                            
-                            // 3. Extract model IDs to force them to load
-                            const modelsArray = (vpDetail.viewpoint && vpDetail.viewpoint.models) ? vpDetail.viewpoint.models : 
-                                                (vpDetail.models ? vpDetail.models :[]);
-                                                
-                            modelsArray.forEach(m => {
-                                const mid = m.model_id || m.modelId || m.id;
-                                if (mid) modelIds.push(mid);
+                        // 2. If we didn't find the short ViewId immediately, fetch specific viewpoint details
+                        if (bcfViewpointId) {
+                            const detailResp = await fetch(`${activeEndpoint}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics/${encodeURIComponent(topicGuid)}/viewpoints/${encodeURIComponent(bcfViewpointId)}`, {
+                                headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
                             });
+                            
+                            if (detailResp.ok) {
+                                const vpDetail = await detailResp.json();
+                                
+                                // Search details for the short view ID
+                                if (!trimbleViewId) {
+                                    trimbleViewId = findTrimbleViewId(vpDetail);
+                                }
+                                
+                                // 3. Extract model IDs to force them to load (Just in case trimbleViewId fails)
+                                const modelsArray = (vpDetail.viewpoint && vpDetail.viewpoint.models) ? vpDetail.viewpoint.models : 
+                                                    (vpDetail.models ? vpDetail.models :[]);
+                                                    
+                                modelsArray.forEach(m => {
+                                    const mid = m.model_id || m.modelId || m.id;
+                                    if (mid && typeof mid === 'string') modelIds.push(mid);
+                                });
+                            }
                         }
                     }
                 }
 
                 // 4. Construct Final Deep Link
-                const uniqueModels = [...new Set(modelIds)];
                 let finalUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${topicGuid}`;
                 
-                // If a short viewId (e.g., Vudl_eKrqx0) was found, prioritize it.
-                if (shortViewId) {
-                    finalUrl += `&viewId=${shortViewId}`;
+                // If a short viewId (e.g., Vudl_eKrqx0) was found, this perfectly loads Camera + Models + Topic
+                if (trimbleViewId) {
+                    finalUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?viewId=${trimbleViewId}&topicId=${topicGuid}`;
                 } 
-                // Otherwise fallback to the standard BCF viewpointId parameter which applies the camera view
-                else if (firstVpId) {
-                    finalUrl += `&viewpointId=${firstVpId}`;
-                }
-
-                // Append model IDs to force downloading the actual 3D files
-                if (uniqueModels.length > 0) {
-                    finalUrl += `&modelId=${uniqueModels.join(',')}`;
+                // Fallback: Use standard BCF viewpoint parameters
+                else if (bcfViewpointId) {
+                    finalUrl += `&viewpointId=${bcfViewpointId}`;
+                    const uniqueModels = [...new Set(modelIds)];
+                    if (uniqueModels.length > 0) {
+                        finalUrl += `&modelId=${uniqueModels.join(',')}`;
+                    }
                 }
                 
                 window.open(finalUrl, '_blank');
