@@ -239,9 +239,16 @@
             
             // Map the JSON safely
             rawData = bcfArray.map(topic => {
+                
+                // Formats the assignee name: strips the email domain if present
+                let assigneeName = topic.assigned_to || 'Ikke tildelt';
+                if (assigneeName.includes('@')) {
+                    assigneeName = assigneeName.split('@')[0]; // Gets everything before the '@'
+                }
+
                 return {
                     id: topic.title || topic.topic_title || topic.guid || topic.topic_guid || 'Uten tittel',
-                    assignee: topic.assigned_to || 'Ikke tildelt',
+                    assignee: assigneeName,
                     status: topic.topic_status || topic.status || 'Open',
                     priority: topic.priority || 'Normal',
                     tags: extractTags(topic)
@@ -251,8 +258,8 @@
             // Extract unique dynamic values safely (Defaults to empty arrays)
             allAssignees =[...new Set(rawData.map(i => i.assignee))].sort() || [];
             allStatuses =[...new Set(rawData.map(i => i.status))].sort() ||[];
-            allPriorities = [...new Set(rawData.map(i => i.priority))].sort() ||[];
-            allTags = [...new Set(rawData.flatMap(i => i.tags))].sort() ||[];
+            allPriorities =[...new Set(rawData.map(i => i.priority))].sort() ||[];
+            allTags =[...new Set(rawData.flatMap(i => i.tags))].sort() ||[];
 
             populateSelect('assigneeFilter', allAssignees);
             populateSelect('statusFilter', allStatuses);
