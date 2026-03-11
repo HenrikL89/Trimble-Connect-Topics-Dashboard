@@ -25,7 +25,6 @@
             display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;
         }
         .spinner { border: 4px solid #f3f4f6; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
-        .spinner-small { border: 2px solid #cbd5e1; border-top: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; animation: spin 1s linear infinite; display: inline-block; vertical-align: text-bottom; margin-right: 6px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         #error-log { color: #ef4444; font-size: 14px; margin-top: 10px; max-width: 600px; word-wrap: break-word; }
 
@@ -51,7 +50,7 @@
         .tag-badge { display: inline-block; padding: 3px 6px; background-color: #e5e7eb; color: #4b5563; border-radius: 4px; font-size: 11px; margin: 2px; }
         
         /* Deep Link Styling */
-        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
         .issue-link:hover { text-decoration: underline; color: #2563eb; }
         .link-icon { font-size: 12px; }
 
@@ -108,7 +107,6 @@
         ];
 
         let API = null, accessToken = null, currentProjectId = null;
-        let activeEndpoint = "https://open21.connect.trimble.com"; 
         
         let rawData =[];
         let statusChart = null, priorityChart = null, assigneeChart = null;
@@ -189,7 +187,6 @@
                     const resp = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" } });
 
                     if (resp.ok) {
-                        activeEndpoint = base; 
                         const json = await resp.json();
                         if (Array.isArray(json)) fetchedArray = json;
                         else if (json && Array.isArray(json.topics)) fetchedArray = json.topics;
@@ -225,7 +222,7 @@
                 };
             });
 
-            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort() || [];
+            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort() ||[];
             allStatuses =[...new Set(rawData.map(i => i.status))].sort() ||[];
             allPriorities =[...new Set(rawData.map(i => i.priority))].sort() ||[];
             allTags =[...new Set(rawData.flatMap(i => i.tags))].sort() ||[];
@@ -275,7 +272,7 @@
             });
 
             priorityChart = new Chart(document.getElementById('priorityChart').getContext('2d'), {
-                type: 'pie', data: { labels: allPriorities, datasets:[{ data: [], backgroundColor: allPriorities.map(getColor) }] },
+                type: 'pie', data: { labels: allPriorities, datasets: [{ data: [], backgroundColor: allPriorities.map(getColor) }] },
                 options: chartOptions('priorityFilter')
             });
 
@@ -341,82 +338,6 @@
             assigneeChart.update();
         }
 
-        // ==========================================
-        // 4. BULLETPROOF 3D VIEW & MODEL LOADER
-        // ==========================================
-        window.openTopicIn3D = async function(event, topicGuid) {
-            event.preventDefault();
-            const linkEl = event.currentTarget;
-            const originalHtml = linkEl.innerHTML;
-            
-            linkEl.innerHTML = `<span class="spinner-small"></span> Laster kamera/modeller...`;
-            linkEl.style.pointerEvents = "none";
-
-            try {
-                let modelIds = new Set();
-                let bcfViewpointId = null;
-                
-                // 1. Fetch viewpoints
-                const vpResp = await fetch(`${activeEndpoint}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics/${encodeURIComponent(topicGuid)}/viewpoints`, {
-                    headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
-                });
-                
-                if (vpResp.ok) {
-                    const viewpoints = await vpResp.json();
-                    if (viewpoints && viewpoints.length > 0) {
-                        
-                        const vp = viewpoints.find(v => v.default) || viewpoints[0];
-                        bcfViewpointId = vp.guid || vp.id;
-
-                        // 2. Fetch specific viewpoint to find the hidden 3D Models
-                        const detailResp = await fetch(`${activeEndpoint}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics/${encodeURIComponent(topicGuid)}/viewpoints/${encodeURIComponent(bcfViewpointId)}`, {
-                            headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
-                        });
-                        
-                        if (detailResp.ok) {
-                            const vpDetail = await detailResp.json();
-                            
-                            // SAFELY Extract Models (Ignoring IFC Elements)
-                            if (vpDetail.extensions && Array.isArray(vpDetail.extensions.models)) {
-                                vpDetail.extensions.models.forEach(m => { if (m.modelId) modelIds.add(m.modelId); });
-                            }
-                            if (Array.isArray(vpDetail.models)) {
-                                vpDetail.models.forEach(m => { if (m.model_id) modelIds.add(m.model_id); });
-                            }
-                            if (vpDetail.viewpoint && Array.isArray(vpDetail.viewpoint.models)) {
-                                vpDetail.viewpoint.models.forEach(m => { if (m.model_id) modelIds.add(m.model_id); });
-                            }
-                        }
-                    }
-                }
-
-                // SECURITY CHECK: Trimble Model IDs are 32 chars or 36 chars (UUID). 
-                // We MUST filter out anything shorter, or else the URL breaks the Topic panel!
-                const validModelIds = [...modelIds].filter(id => {
-                    return typeof id === 'string' && id.length >= 32; 
-                });
-
-                // 3. Construct the perfectly balanced Deep Link
-                let finalUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${topicGuid}`;
-                
-                if (bcfViewpointId) {
-                    finalUrl += `&viewpointId=${bcfViewpointId}`;
-                }
-                if (validModelIds.length > 0) {
-                    finalUrl += `&modelId=${encodeURIComponent(validModelIds.join(','))}`;
-                }
-                
-                window.open(finalUrl, '_blank');
-
-            } catch (err) {
-                console.error("Kunne ikke hente viewpoint-detaljer:", err);
-                window.open(`https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${topicGuid}`, '_blank');
-            } finally {
-                linkEl.innerHTML = originalHtml;
-                linkEl.style.pointerEvents = "auto";
-            }
-        };
-
         function updateTable(data) {
             const tbody = document.getElementById('tableBody');
             document.getElementById('issueCount').textContent = data.length;
@@ -430,10 +351,13 @@
             data.forEach(issue => {
                 const tr = document.createElement('tr');
                 const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
+                
+                // Pure Topic ID link - Guarantees the Topics Panel opens correctly!
+                const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
 
                 tr.innerHTML = `
                     <td>
-                        <a href="#" onclick="openTopicIn3D(event, '${escapeHtml(issue.guid)}')" class="issue-link" title="Åpne i 3D Viewer (laster Topic, Kamera og Modeller)">
+                        <a href="${topic3dUrl}" target="_blank" class="issue-link" title="Åpne i 3D Viewer (Klikk på miniatyrbildet for å laste modeller)">
                             ${escapeHtml(issue.id)}
                             <span class="link-icon">↗</span>
                         </a>
