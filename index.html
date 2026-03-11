@@ -49,9 +49,10 @@
         .badge { padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: white; white-space: nowrap; }
         .tag-badge { display: inline-block; padding: 3px 6px; background-color: #e5e7eb; color: #4b5563; border-radius: 4px; font-size: 11px; margin: 2px; }
         
-        /* Hyperlink styling for table issues */
-        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-block; }
+        /* Deep Link Styling */
+        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
         .issue-link:hover { text-decoration: underline; color: #2563eb; }
+        .link-icon { font-size: 12px; }
 
         @media (max-width: 768px) { .dashboard { grid-template-columns: 1fr; } .full-width { grid-column: span 1; } }
     </style>
@@ -89,7 +90,7 @@
                 <div class="card-title">Matching Issues (<span id="issueCount">0</span>)</div>
                 <div class="table-container">
                     <table id="issueTable">
-                        <thead><tr><th>Title / ID</th><th>Assignee</th><th>Status</th><th>Priority</th><th>Tags</th></tr></thead>
+                        <thead><tr><th>Topic Title / Link</th><th>Assignee</th><th>Status</th><th>Priority</th><th>Tags</th></tr></thead>
                         <tbody id="tableBody"></tbody>
                     </table>
                 </div>
@@ -98,7 +99,6 @@
     </div>
 
     <script>
-        // SMART BCF ENDPOINTS
         const BCF_ENDPOINTS =[
             "https://open21.connect.trimble.com",
             "https://bcf.eu.connect.trimble.com",
@@ -107,12 +107,10 @@
         ];
 
         let API = null, accessToken = null, currentProjectId = null;
-        
         let rawData =[];
         let statusChart = null, priorityChart = null, assigneeChart = null;
-        let allAssignees =[], allStatuses = [], allPriorities = [], allTags =[];
+        let allAssignees =[], allStatuses =[], allPriorities = [], allTags =[];
 
-        // Colors
         const colorPalette = {
             'New': '#3b82f6', 'Open': '#3b82f6', 'Active': '#3b82f6',
             'In Progress': '#f59e0b', 'Assigned': '#f59e0b',
@@ -130,17 +128,13 @@
             return colorPalette[key];
         }
 
-        function setLoaderText(text) {
-            document.getElementById('loader-text').innerText = text;
+        function setLoaderText(text) { document.getElementById('loader-text').innerText = text; }
+        function logError(msg) { console.error(msg); document.getElementById('error-log').innerText += msg + "\n"; document.getElementById('spinner').style.display = 'none'; }
+        
+        function escapeHtml(str) {
+            return String(str || "").replace(/[&<>'"]/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[match]);
         }
 
-        function logError(msg) {
-            console.error(msg);
-            document.getElementById('error-log').innerText += msg + "\n";
-            document.getElementById('spinner').style.display = 'none';
-        }
-
-        // --- Robust Tag Extractor ---
         function extractTags(topic) {
             const candidates =[];
             if (topic.labels && Array.isArray(topic.labels)) candidates.push(...topic.labels);
@@ -151,16 +145,11 @@
             return[...new Set(candidates.map(s => String(s).trim()).filter(Boolean))];
         }
 
-        // ==========================================
-        // 1. TRIMBLE CONNECT WORKSPACE API
-        // ==========================================
         async function init() {
             setLoaderText("Kobler til Trimble Connect Workspace...");
             try {
                 API = await TrimbleConnectWorkspace.connect(window.parent, (event, args) => {
-                    if (event === "extension.accessToken" && args.data) {
-                        handleAccessTokenPayload(args.data);
-                    }
+                    if (event === "extension.accessToken" && args.data) handleAccessTokenPayload(args.data);
                 });
 
                 const projectInfo = await API.project.getCurrentProject();
@@ -170,46 +159,25 @@
                 setLoaderText("Ber om tilgang (accessToken)...");
                 const permissionResult = await API.extension.requestPermission("accesstoken");
                 handleAccessTokenPayload(permissionResult);
-
-            } catch (err) {
-                logError("Feil ved tilkobling til Trimble Workspace: " + (err.message || err));
-            }
+            } catch (err) { logError("Feil ved tilkobling til Trimble Workspace: " + (err.message || err)); }
         }
 
         function handleAccessTokenPayload(payload) {
-            if (!payload) return;
-            if (typeof payload === "string") {
-                if (payload === "pending" || payload === "denied") return;
-                accessToken = payload;
-                fetchDataWithSmartFallback();
-                return;
-            }
-            if (typeof payload === "object") {
-                if (payload.status === "denied") {
-                    logError("Tilgang til accessToken ble avslått.");
-                } else if (payload.accessToken) {
-                    accessToken = payload.accessToken;
-                    fetchDataWithSmartFallback();
-                }
-            }
+            if (!payload || payload === "pending" || payload === "denied") return;
+            if (typeof payload === "string") accessToken = payload;
+            else if (typeof payload === "object" && payload.accessToken) accessToken = payload.accessToken;
+            if (accessToken) fetchDataWithSmartFallback();
         }
 
-        // ==========================================
-        // 2. SMART FETCH DATA 
-        // ==========================================
         async function fetchDataWithSmartFallback() {
             setLoaderText("Henter BCF Topics fra server...");
-            
             let fetchedArray = null;
 
             for (const base of BCF_ENDPOINTS) {
                 try {
                     setLoaderText(`Prøver BCF endpoint: ${base}...`);
                     const url = `${base}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics`;
-                    const resp = await fetch(url, {
-                        method: "GET",
-                        headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
-                    });
+                    const resp = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" } });
 
                     if (resp.ok) {
                         const json = await resp.json();
@@ -217,40 +185,23 @@
                         else if (json && Array.isArray(json.topics)) fetchedArray = json.topics;
                         else if (json && Array.isArray(json.value)) fetchedArray = json.value;
                         else fetchedArray =[]; 
-                        
-                        console.log(`Suksess! Hentet data fra: ${base}`);
                         break; 
                     }
-                } catch (err) {
-                    console.warn(`Endpoint feilet: ${base}`, err);
-                }
+                } catch (err) { console.warn(`Endpoint feilet: ${base}`, err); }
             }
 
-            if (fetchedArray === null) {
-                logError("Klarte ikke å hente topics fra noen kjente BCF servere.");
-                return;
-            }
-
+            if (fetchedArray === null) return logError("Klarte ikke å hente topics fra noen kjente BCF servere.");
             processDataSafely(fetchedArray);
         }
 
-        // ==========================================
-        // 3. SAFE DATA PARSING & DASHBOARD INIT
-        // ==========================================
         function processDataSafely(bcfArray) {
             setLoaderText("Prosesserer og bygger dashboard...");
             
             rawData = bcfArray.map(topic => {
-                
-                // Formats the assignee name: strips the email domain if present
                 let assigneeName = topic.assigned_to || 'Ikke tildelt';
-                if (assigneeName.includes('@')) {
-                    assigneeName = assigneeName.split('@')[0];
-                }
+                if (assigneeName.includes('@')) assigneeName = assigneeName.split('@')[0];
 
-                // Gets the unique identifier for the specific Topic
                 const guid = topic.guid || topic.topic_guid || topic.id || '';
-
                 return {
                     id: topic.title || topic.topic_title || guid || 'Uten tittel',
                     guid: guid,
@@ -261,7 +212,6 @@
                 };
             });
 
-            // Extract unique values securely
             allAssignees =[...new Set(rawData.map(i => i.assignee))].sort() || [];
             allStatuses =[...new Set(rawData.map(i => i.status))].sort() ||[];
             allPriorities =[...new Set(rawData.map(i => i.priority))].sort() ||[];
@@ -283,12 +233,7 @@
             const select = document.getElementById(id);
             if (!select) return;
             select.innerHTML = select.options[0].outerHTML;
-            items.forEach(item => { 
-                const opt = document.createElement('option'); 
-                opt.value = item; 
-                opt.textContent = item; 
-                select.appendChild(opt); 
-            });
+            items.forEach(item => { const opt = document.createElement('option'); opt.value = item; opt.textContent = item; select.appendChild(opt); });
         }
 
         const handleChartHover = (event, elements) => { event.native.target.style.cursor = elements.length ? 'pointer' : 'default'; };
@@ -341,17 +286,10 @@
             });
         }
 
-        function resetFilters() {['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All');
-            applyFilters();
-        }
+        function resetFilters() {['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All'); applyFilters(); }
 
         function applyFilters() {
-            const filters = {
-                assignee: document.getElementById('assigneeFilter').value,
-                status: document.getElementById('statusFilter').value,
-                priority: document.getElementById('priorityFilter').value,
-                tag: document.getElementById('tagFilter').value
-            };
+            const filters = { assignee: document.getElementById('assigneeFilter').value, status: document.getElementById('statusFilter').value, priority: document.getElementById('priorityFilter').value, tag: document.getElementById('tagFilter').value };
 
             Object.keys(filters).forEach(key => {
                 const el = document.getElementById(key + 'Filter');
@@ -375,30 +313,18 @@
             
             allStatuses.forEach(s => statusCounts[s] = 0);
             allPriorities.forEach(p => priorityCounts[p] = 0);
-            allAssignees.forEach(a => { 
-                assigneeCounts[a] = {}; 
-                allStatuses.forEach(s => assigneeCounts[a][s] = 0); 
-            });
+            allAssignees.forEach(a => { assigneeCounts[a] = {}; allStatuses.forEach(s => assigneeCounts[a][s] = 0); });
 
             data.forEach(issue => {
                 if(statusCounts[issue.status] !== undefined) statusCounts[issue.status]++;
                 if(priorityCounts[issue.priority] !== undefined) priorityCounts[issue.priority]++;
-                if(assigneeCounts[issue.assignee] && assigneeCounts[issue.assignee][issue.status] !== undefined) {
-                    assigneeCounts[issue.assignee][issue.status]++;
-                }
+                if(assigneeCounts[issue.assignee] && assigneeCounts[issue.assignee][issue.status] !== undefined) assigneeCounts[issue.assignee][issue.status]++;
             });
 
-            statusChart.data.datasets[0].data = allStatuses.map(s => statusCounts[s]); 
-            statusChart.update();
-            
-            priorityChart.data.datasets[0].data = allPriorities.map(p => priorityCounts[p]); 
-            priorityChart.update();
+            statusChart.data.datasets[0].data = allStatuses.map(s => statusCounts[s]); statusChart.update();
+            priorityChart.data.datasets[0].data = allPriorities.map(p => priorityCounts[p]); priorityChart.update();
 
-            allStatuses.forEach((status, index) => { 
-                if(assigneeChart.data.datasets[index]) {
-                    assigneeChart.data.datasets[index].data = allAssignees.map(a => assigneeCounts[a][status]); 
-                }
-            });
+            allStatuses.forEach((status, index) => { if(assigneeChart.data.datasets[index]) assigneeChart.data.datasets[index].data = allAssignees.map(a => assigneeCounts[a][status]); });
             assigneeChart.update();
         }
 
@@ -414,27 +340,27 @@
 
             data.forEach(issue => {
                 const tr = document.createElement('tr');
-                const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${tag}</span>`).join('');
+                const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
                 
-                // Deep link generated for Trimble Connect Web
-                const topicUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/topics/${issue.guid}`;
+                // Deep link generated for Trimble Connect 3D Viewer
+                const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
 
                 tr.innerHTML = `
                     <td>
-                        <a href="${topicUrl}" target="_blank" class="issue-link" title="Åpne i Trimble Connect">
-                            ${issue.id}
+                        <a href="${topic3dUrl}" target="_blank" class="issue-link" title="Åpne i 3D Viewer (Trimble Connect)">
+                            ${escapeHtml(issue.id)}
+                            <span class="link-icon">↗</span>
                         </a>
                     </td>
-                    <td>${issue.assignee}</td>
-                    <td><span class="badge" style="background-color: ${getColor(issue.status)}">${issue.status}</span></td>
-                    <td><span class="badge" style="background-color: ${getColor(issue.priority)}">${issue.priority}</span></td>
+                    <td>${escapeHtml(issue.assignee)}</td>
+                    <td><span class="badge" style="background-color: ${getColor(issue.status)}">${escapeHtml(issue.status)}</span></td>
+                    <td><span class="badge" style="background-color: ${getColor(issue.priority)}">${escapeHtml(issue.priority)}</span></td>
                     <td>${tagsHtml}</td>
                 `;
                 tbody.appendChild(tr);
             });
         }
 
-        // Start everything on load
         window.onload = init;
     </script>
 </body>
