@@ -100,7 +100,6 @@
     </div>
 
     <script>
-        // SMART BCF ENDPOINTS
         const BCF_ENDPOINTS =[
             "https://open21.connect.trimble.com",
             "https://bcf.eu.connect.trimble.com",
@@ -113,7 +112,7 @@
         
         let rawData =[];
         let statusChart = null, priorityChart = null, assigneeChart = null;
-        let allAssignees =[], allStatuses = [], allPriorities =[], allTags =[];
+        let allAssignees =[], allStatuses =[], allPriorities =[], allTags =[];
 
         const colorPalette = {
             'New': '#3b82f6', 'Open': '#3b82f6', 'Active': '#3b82f6',
@@ -176,9 +175,6 @@
             if (accessToken) fetchDataWithSmartFallback();
         }
 
-        // ==========================================
-        // 2. SMART FETCH DATA 
-        // ==========================================
         async function fetchDataWithSmartFallback() {
             setLoaderText("Henter BCF Topics fra server...");
             let fetchedArray = null;
@@ -190,7 +186,7 @@
                     const resp = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" } });
 
                     if (resp.ok) {
-                        activeEndpoint = base; // Save the working endpoint so the 3D loader knows where to fetch viewpoints from
+                        activeEndpoint = base; // Save the working endpoint
                         const json = await resp.json();
                         if (Array.isArray(json)) fetchedArray = json;
                         else if (json && Array.isArray(json.topics)) fetchedArray = json.topics;
@@ -205,9 +201,6 @@
             processDataSafely(fetchedArray);
         }
 
-        // ==========================================
-        // 3. SAFE DATA PARSING & DASHBOARD INIT
-        // ==========================================
         function processDataSafely(bcfArray) {
             setLoaderText("Prosesserer og bygger dashboard...");
             
@@ -343,46 +336,20 @@
         }
 
         // ==========================================
-        // 4. DEEP SEARCH FOR TRIMBLE VIEW ID
-        // ==========================================
-        function findTrimbleViewId(obj) {
-            if (!obj || typeof obj !== 'object') return null;
-            
-            // Check known keys where Trimble hides the short View ID (like Vudl_eKrqx0)
-            const keys =['viewId', 'view_id', 'trimble_view_id', 'trimbleViewId'];
-            for (let k of keys) {
-                // View IDs are usually short (11 chars) and don't have hyphens unlike GUIDs
-                if (typeof obj[k] === 'string' && obj[k].length > 5 && obj[k].length < 25 && !obj[k].includes('-')) {
-                    return obj[k];
-                }
-            }
-            
-            // Recursively search the JSON object
-            for (let key in obj) {
-                if (typeof obj[key] === 'object') {
-                    let res = findTrimbleViewId(obj[key]);
-                    if (res) return res;
-                }
-            }
-            return null;
-        }
-
-        // ==========================================
-        // 5. ADVANCED 3D VIEW & MODEL LOADER
+        // 4. ADVANCED 3D VIEW & MODEL LOADER
         // ==========================================
         window.openTopicIn3D = async function(event, topicGuid) {
             event.preventDefault();
             const linkEl = event.currentTarget;
             const originalHtml = linkEl.innerHTML;
             
-            // Visual feedback so user knows data is being fetched
-            linkEl.innerHTML = `<span class="spinner-small"></span> Laster kamera/modeller...`;
+            // Visual feedback
+            linkEl.innerHTML = `<span class="spinner-small"></span> Laster view/modeller...`;
             linkEl.style.pointerEvents = "none";
 
             try {
-                let trimbleViewId = null;
+                let modelIds = new Set();
                 let bcfViewpointId = null;
-                let modelIds =[];
                 
                 // 1. Fetch viewpoints for the topic
                 const vpResp = await fetch(`${activeEndpoint}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics/${encodeURIComponent(topicGuid)}/viewpoints`, {
@@ -393,52 +360,60 @@
                     const viewpoints = await vpResp.json();
                     if (viewpoints && viewpoints.length > 0) {
                         
-                        // Grab the default viewpoint (or the first one if no default)
+                        // Grab the default viewpoint (or the first one)
                         const vp = viewpoints.find(v => v.default) || viewpoints[0];
                         bcfViewpointId = vp.guid || vp.id;
-                        trimbleViewId = findTrimbleViewId(vp);
 
-                        // 2. If we didn't find the short ViewId immediately, fetch specific viewpoint details
-                        if (bcfViewpointId) {
-                            const detailResp = await fetch(`${activeEndpoint}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics/${encodeURIComponent(topicGuid)}/viewpoints/${encodeURIComponent(bcfViewpointId)}`, {
-                                headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
-                            });
+                        // 2. Fetch specific viewpoint details to get the deep model IDs
+                        const detailResp = await fetch(`${activeEndpoint}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics/${encodeURIComponent(topicGuid)}/viewpoints/${encodeURIComponent(bcfViewpointId)}`, {
+                            headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
+                        });
+                        
+                        if (detailResp.ok) {
+                            const vpDetail = await detailResp.json();
                             
-                            if (detailResp.ok) {
-                                const vpDetail = await detailResp.json();
-                                
-                                // Search details for the short view ID
-                                if (!trimbleViewId) {
-                                    trimbleViewId = findTrimbleViewId(vpDetail);
-                                }
-                                
-                                // 3. Extract model IDs to force them to load (Just in case trimbleViewId fails)
-                                const modelsArray = (vpDetail.viewpoint && vpDetail.viewpoint.models) ? vpDetail.viewpoint.models : 
-                                                    (vpDetail.models ? vpDetail.models :[]);
-                                                    
-                                modelsArray.forEach(m => {
-                                    const mid = m.model_id || m.modelId || m.id;
-                                    if (mid && typeof mid === 'string') modelIds.push(mid);
+                            // Safe Extraction Method 1: Trimble Extensions
+                            if (vpDetail.extensions && Array.isArray(vpDetail.extensions.models)) {
+                                vpDetail.extensions.models.forEach(m => {
+                                    if (m.modelId) modelIds.add(m.modelId);
+                                    if (m.id) modelIds.add(m.id);
+                                });
+                            }
+                            
+                            // Safe Extraction Method 2: Root Models
+                            if (Array.isArray(vpDetail.models)) {
+                                vpDetail.models.forEach(m => {
+                                    if (m.model_id) modelIds.add(m.model_id);
+                                    if (m.modelId) modelIds.add(m.modelId);
+                                    if (m.id) modelIds.add(m.id);
+                                });
+                            }
+                            
+                            // Safe Extraction Method 3: BCF Standard Components
+                            if (vpDetail.viewpoint && vpDetail.viewpoint.components && Array.isArray(vpDetail.viewpoint.components.selection)) {
+                                vpDetail.viewpoint.components.selection.forEach(c => {
+                                    if (c.authoring_tool_id) modelIds.add(c.authoring_tool_id);
                                 });
                             }
                         }
                     }
                 }
 
-                // 4. Construct Final Deep Link
+                // Filter out any garbage IDs
+                const validModelIds = [...modelIds].filter(id => typeof id === 'string' && id.length > 10 && !id.includes(' '));
+
+                // 3. Construct Final Deep Link
+                // Using ONLY topicId + modelId + viewpointId guarantees the Topic Panel stays open!
                 let finalUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${topicGuid}`;
                 
-                // If a short viewId (e.g., Vudl_eKrqx0) was found, this perfectly loads Camera + Models + Topic
-                if (trimbleViewId) {
-                    finalUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?viewId=${trimbleViewId}&topicId=${topicGuid}`;
-                } 
-                // Fallback: Use standard BCF viewpoint parameters
-                else if (bcfViewpointId) {
+                // Add Models to force 3D download
+                if (validModelIds.length > 0) {
+                    finalUrl += `&modelId=${validModelIds.join(',')}`;
+                }
+                
+                // Add viewpoint to try forcing the camera jump
+                if (bcfViewpointId) {
                     finalUrl += `&viewpointId=${bcfViewpointId}`;
-                    const uniqueModels = [...new Set(modelIds)];
-                    if (uniqueModels.length > 0) {
-                        finalUrl += `&modelId=${uniqueModels.join(',')}`;
-                    }
                 }
                 
                 window.open(finalUrl, '_blank');
@@ -470,7 +445,7 @@
 
                 tr.innerHTML = `
                     <td>
-                        <a href="#" onclick="openTopicIn3D(event, '${escapeHtml(issue.guid)}')" class="issue-link" title="Åpne i 3D Viewer (laster View og Modeller automatisk)">
+                        <a href="#" onclick="openTopicIn3D(event, '${escapeHtml(issue.guid)}')" class="issue-link" title="Åpne i 3D Viewer (laster modeller og Topic Panel automatisk)">
                             ${escapeHtml(issue.id)}
                             <span class="link-icon">↗</span>
                         </a>
