@@ -1,5 +1,6 @@
 {
   "title": "Interactive Topics Dashboard",
   "url": "https://henrikl89.github.io/Trimble-Connect-Topics-Dashboard/index.html",
-  "description": "Live visualization and interactive charting of BCF Topics"
+  "description": "Live visualization and interactive charting of BCF Topics",
+  "icon": "https://raw.githubusercontent.com/ionic-team/ionicons/main/src/svg/bar-chart.svg"
 }
