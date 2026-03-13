@@ -96,7 +96,7 @@
         <div class="dashboard">
             <div class="card"><div class="card-title">Status Distribution</div><div class="chart-container"><canvas id="statusChart"></canvas></div></div>
             <div class="card"><div class="card-title">Priority Levels</div><div class="chart-container"><canvas id="priorityChart"></canvas></div></div>
-            <div class="card full-width"><div class="card-title">Workload by Assignee</div><div class="chart-container" style="height: 350px;"><canvas id="assigneeChart"></canvas></div></div>
+            <div class="card full-width"><div class="card-title">Workload by User Group</div><div class="chart-container" style="height: 350px;"><canvas id="assigneeChart"></canvas></div></div>
             <div class="card full-width">
                 <div class="card-title">Matching Issues (<span id="issueCount">0</span>)</div>
                 <div class="table-container">
@@ -123,9 +123,11 @@
         ];
 
         let API = null, accessToken = null, currentProjectId = null;
+        let activeEndpoint = "https://open21.connect.trimble.com"; 
         
         let rawData = [];
-        let currentFilteredData =[]; // Keeps track of active data for CSV Export
+        let currentFilteredData =[]; 
+        let userToGroupMap = {};
         
         let statusChart = null, priorityChart = null, assigneeChart = null;
         let allAssignees =[], allStatuses =[], allPriorities =[], allTags =[];
@@ -192,7 +194,7 @@
         }
 
         // ==========================================
-        // 2. SMART FETCH DATA 
+        // 2. SMART FETCH DATA (Topics & Groups)
         // ==========================================
         async function fetchDataWithSmartFallback() {
             setLoaderText("Henter BCF Topics fra server...");
@@ -200,11 +202,11 @@
 
             for (const base of BCF_ENDPOINTS) {
                 try {
-                    setLoaderText(`Prøver BCF endpoint: ${base}...`);
                     const url = `${base}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics`;
                     const resp = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" } });
 
                     if (resp.ok) {
+                        activeEndpoint = base; 
                         const json = await resp.json();
                         if (Array.isArray(json)) fetchedArray = json;
                         else if (json && Array.isArray(json.topics)) fetchedArray = json.topics;
@@ -212,11 +214,66 @@
                         else fetchedArray =[]; 
                         break; 
                     }
-                } catch (err) { console.warn(`Endpoint feilet: ${base}`, err); }
+                } catch (err) {}
             }
 
             if (fetchedArray === null) return logError("Klarte ikke å hente topics fra noen kjente BCF servere.");
+            
+            // FETCH GROUPS
+            await fetchProjectGroups();
+            
             processDataSafely(fetchedArray);
+        }
+
+        async function fetchProjectGroups() {
+            setLoaderText("Henter prosjektets brukergrupper...");
+            
+            let primaryCore = "https://app.connect.trimble.com";
+            if (activeEndpoint.includes("open21")) primaryCore = "https://app21.connect.trimble.com";
+            else if (activeEndpoint.includes("eu.")) primaryCore = "https://europe.connect.trimble.com";
+            else if (activeEndpoint.includes("asia.")) primaryCore = "https://asia.connect.trimble.com";
+
+            const TC_API_ENDPOINTS =[
+                primaryCore,
+                "https://app21.connect.trimble.com",
+                "https://europe.connect.trimble.com",
+                "https://app.connect.trimble.com"
+            ];
+            
+            for (const tcBase of TC_API_ENDPOINTS) {
+                try {
+                    const urlUsers = `${tcBase}/tc/api/2.0/projects/${encodeURIComponent(currentProjectId)}/users`;
+                    const respUsers = await fetch(urlUsers, {
+                        method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
+                    });
+
+                    if (respUsers.ok) {
+                        const users = await respUsers.json();
+                        let foundGroups = false;
+                        
+                        users.forEach(u => {
+                            const grps = u.userGroups || u.groups ||[];
+                            if (grps.length > 0) {
+                                // Exclude "Norconsult" specifically
+                                const validGrps = grps.map(g => g.name || g.groupName).filter(n => n && n.toLowerCase() !== 'norconsult');
+                                
+                                if (validGrps.length > 0) {
+                                    const gName = validGrps.join(' & ');
+                                    const mapKey = (k) => { if(k) userToGroupMap[String(k).toLowerCase().trim()] = gName; };
+                                    
+                                    mapKey(u.email);
+                                    if (u.email && u.email.includes('@')) mapKey(u.email.split('@')[0]);
+                                    mapKey(`${u.firstName || ''} ${u.lastName || ''}`);
+                                    mapKey(u.name);
+                                    
+                                    foundGroups = true;
+                                }
+                            }
+                        });
+                        if (foundGroups) break; 
+                    }
+                } catch(e) {}
+            }
         }
 
         // ==========================================
@@ -226,14 +283,26 @@
             setLoaderText("Prosesserer og bygger dashboard...");
             
             rawData = bcfArray.map(topic => {
-                let assigneeName = topic.assigned_to || 'Ikke tildelt';
+                let assigneeEmail = topic.assigned_to || '';
+                let assigneeName = assigneeEmail || 'Ikke tildelt';
+                let lookupKey = assigneeEmail.toLowerCase().trim();
+
                 if (assigneeName.includes('@')) assigneeName = assigneeName.split('@')[0];
+
+                // Check Map for User Group. If none found, default back to the individual's username
+                let displayGroup = assigneeName; 
+                if (userToGroupMap[lookupKey]) {
+                    displayGroup = userToGroupMap[lookupKey];
+                } else if (userToGroupMap[assigneeName.toLowerCase().trim()]) {
+                    displayGroup = userToGroupMap[assigneeName.toLowerCase().trim()];
+                }
 
                 const guid = topic.guid || topic.topic_guid || topic.id || '';
                 return {
                     id: topic.title || topic.topic_title || guid || 'Uten tittel',
                     guid: guid,
-                    assignee: assigneeName,
+                    assignee: assigneeName, // Used for Table, CSV, and Filter
+                    displayGroup: displayGroup, // Used exclusively for the Bar Chart grouping
                     status: topic.topic_status || topic.status || 'Open',
                     priority: topic.priority || 'Normal',
                     tags: extractTags(topic)
@@ -294,22 +363,15 @@
                 options: chartOptions('priorityFilter')
             });
 
+            // Initialize Group/Assignee chart with empty data initially
             const datasets = allStatuses.map(status => ({ label: status, data:[], backgroundColor: getColor(status) }));
             assigneeChart = new Chart(document.getElementById('assigneeChart').getContext('2d'), {
-                type: 'bar', data: { labels: allAssignees, datasets: datasets },
+                type: 'bar', data: { labels:[], datasets: datasets },
                 options: {
                     responsive: true, maintainAspectRatio: false,
                     scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } },
-                    plugins: { tooltip: { mode: 'index', intersect: false } },
-                    onClick: (event, elements) => {
-                        if (elements.length > 0) {
-                            const label = assigneeChart.data.labels[elements[0].index];
-                            const select = document.getElementById('assigneeFilter');
-                            select.value = select.value === label ? 'All' : label;
-                            applyFilters();
-                        }
-                    },
-                    onHover: handleChartHover
+                    plugins: { tooltip: { mode: 'index', intersect: false } }
+                    // Removed onClick from Bar Chart so it doesn't try to conflict with the Assignee (User) filter dropdown
                 }
             });
         }
@@ -337,31 +399,31 @@
         }
 
         function updateCharts(data) {
-            let statusCounts = {}, priorityCounts = {}, assigneeCounts = {};
+            let statusCounts = {}, priorityCounts = {}, groupCounts = {};
             
-            // Extract ONLY the assignees that are present in the active filtered data
-            let activeAssignees =[...new Set(data.map(i => i.assignee))].sort();
+            // For the Bar Chart ONLY, we extract the Display Groups (User Groups)
+            let activeGroups =[...new Set(data.map(i => i.displayGroup))].sort();
 
             allStatuses.forEach(s => statusCounts[s] = 0);
             allPriorities.forEach(p => priorityCounts[p] = 0);
-            
-            // Setup count buckets for active assignees only
-            activeAssignees.forEach(a => { assigneeCounts[a] = {}; allStatuses.forEach(s => assigneeCounts[a][s] = 0); });
+            activeGroups.forEach(g => { groupCounts[g] = {}; allStatuses.forEach(s => groupCounts[g][s] = 0); });
 
             data.forEach(issue => {
                 if(statusCounts[issue.status] !== undefined) statusCounts[issue.status]++;
                 if(priorityCounts[issue.priority] !== undefined) priorityCounts[issue.priority]++;
-                if(assigneeCounts[issue.assignee] && assigneeCounts[issue.assignee][issue.status] !== undefined) assigneeCounts[issue.assignee][issue.status]++;
+                if(groupCounts[issue.displayGroup] && groupCounts[issue.displayGroup][issue.status] !== undefined) {
+                    groupCounts[issue.displayGroup][issue.status]++;
+                }
             });
 
             statusChart.data.datasets[0].data = allStatuses.map(s => statusCounts[s]); statusChart.update();
             priorityChart.data.datasets[0].data = allPriorities.map(p => priorityCounts[p]); priorityChart.update();
 
-            // Update Assignee Chart to hide empty names dynamically
-            assigneeChart.data.labels = activeAssignees;
+            // Update the Bar Chart to show aggregated User Groups
+            assigneeChart.data.labels = activeGroups;
             allStatuses.forEach((status, index) => { 
                 if(assigneeChart.data.datasets[index]) {
-                    assigneeChart.data.datasets[index].data = activeAssignees.map(a => assigneeCounts[a][status]); 
+                    assigneeChart.data.datasets[index].data = activeGroups.map(g => groupCounts[g][status]); 
                 }
             });
             assigneeChart.update();
@@ -385,7 +447,7 @@
 
                 tr.innerHTML = `
                     <td>
-                        <a href="${topic3dUrl}" target="_blank" class="issue-link" title="Åpne i 3D Viewer (Klikk på miniatyrbildet i Topics panelet for å laste modellene)">
+                        <a href="${topic3dUrl}" target="_blank" class="issue-link" title="Åpne i 3D Viewer">
                             ${escapeHtml(issue.id)}
                             <span class="link-icon">↗</span>
                         </a>
@@ -400,7 +462,7 @@
         }
         
         // ==========================================
-        // 4. CSV EXPORT FUNCTIONALITY
+        // 5. CSV EXPORT FUNCTIONALITY
         // ==========================================
         function exportCSV() {
             if (currentFilteredData.length === 0) {
@@ -414,7 +476,6 @@
                 const tagsStr = issue.tags.join(" | ");
                 const link = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
                 
-                // Wrap in quotes and escape internal quotes to prevent CSV breaking
                 return[
                     `"${issue.id.replace(/"/g, '""')}"`,
                     `"${issue.assignee.replace(/"/g, '""')}"`,
@@ -425,7 +486,6 @@
                 ].join(",");
             });
 
-            // \uFEFF ensures Excel reads UTF-8 characters properly (æ, ø, å)
             const csvContent = "\uFEFF" +[headers.join(","), ...rows].join("\n");
             
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
