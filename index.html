@@ -115,18 +115,27 @@
     </div>
 
     <script>
+        // BCF Endpoints
         const BCF_ENDPOINTS =[
             "https://open21.connect.trimble.com",
             "https://bcf.eu.connect.trimble.com",
             "https://bcf.connect.trimble.com",
             "https://bcf.asia.connect.trimble.com"
         ];
+        
+        // General API Endpoints (For User Groups)
+        const TC_API_ENDPOINTS =[
+            "https://app21.connect.trimble.com",
+            "https://app.connect.trimble.com",
+            "https://app31.connect.trimble.com",
+            "https://europe.connect.trimble.com"
+        ];
 
         let API = null, accessToken = null, currentProjectId = null;
         let activeEndpoint = "https://open21.connect.trimble.com"; 
         
-        let rawData =[];
-        let currentFilteredData =[];
+        let rawData = [];
+        let currentFilteredData =[]; 
         
         let statusChart = null, priorityChart = null, groupChart = null;
         let allGroups = [], allStatuses = [], allPriorities = [], allTags =[];
@@ -201,7 +210,6 @@
 
             for (const base of BCF_ENDPOINTS) {
                 try {
-                    setLoaderText(`Prøver BCF endpoint: ${base}...`);
                     const url = `${base}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics`;
                     const resp = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" } });
 
@@ -214,49 +222,60 @@
                         else fetchedArray =[]; 
                         break; 
                     }
-                } catch (err) { console.warn(`Endpoint feilet: ${base}`, err); }
+                } catch (err) {}
             }
 
             if (fetchedArray === null) return logError("Klarte ikke å hente topics fra noen kjente BCF servere.");
             
-            await fetchProjectGroups(); // Fetch User Groups from TC API
-            
+            await fetchProjectGroups(); 
             processDataSafely(fetchedArray);
         }
 
         // ==========================================
-        // 3. FETCH PROJECT USER GROUPS
+        // 3. SECURE FETCH PROJECT GROUPS
         // ==========================================
         async function fetchProjectGroups() {
-            setLoaderText("Henter brukergrupper...");
-            try {
-                // Dynamically convert BCF API URL to standard TC App API URL based on region
-                let tcBase = activeEndpoint.replace('open21', 'app21').replace('bcf', 'app');
-                const url = `${tcBase}/tc/api/2.0/projects/${encodeURIComponent(currentProjectId)}/users`;
-                
-                const resp = await fetch(url, {
-                    method: "GET",
-                    headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
-                });
+            setLoaderText("Henter prosjektets brukergrupper...");
+            
+            for (const tcBase of TC_API_ENDPOINTS) {
+                try {
+                    const url = `${tcBase}/tc/api/2.0/projects/${encodeURIComponent(currentProjectId)}/users`;
+                    const resp = await fetch(url, {
+                        method: "GET",
+                        headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
+                    });
 
-                if (resp.ok) {
-                    const users = await resp.json();
-                    users.forEach(u => {
-                        if (u.email) {
+                    if (resp.ok) {
+                        const users = await resp.json();
+                        
+                        // Map multiple identifiers (Email, Username, and Full Name) to ensure a match!
+                        users.forEach(u => {
                             let gName = null;
                             if (u.groups && u.groups.length > 0) {
-                                // If member of multiple groups, join them with an ampersand
                                 gName = u.groups.map(g => g.name).join(' & ');
                             }
+                            
                             if (gName) {
-                                userToGroupMap[u.email.toLowerCase()] = gName;
+                                // 1. Map by full email
+                                if (u.email) {
+                                    userToGroupMap[u.email.toLowerCase().trim()] = gName;
+                                    // 2. Map by username (everything before the @)
+                                    userToGroupMap[u.email.split('@')[0].toLowerCase().trim()] = gName;
+                                }
+                                // 3. Map by explicit First/Last Name
+                                if (u.firstName || u.lastName) {
+                                    const fullName = `${u.firstName || ''} ${u.lastName || ''}`.trim().toLowerCase();
+                                    userToGroupMap[fullName] = gName;
+                                }
                             }
-                        }
-                    });
-                    groupsSuccessfullyFetched = true;
+                        });
+                        
+                        groupsSuccessfullyFetched = true;
+                        break; // Stop loop once successfully fetched
+                    }
+                } catch(e) {
+                    console.warn(`Failed to fetch groups from ${tcBase}`, e);
                 }
-            } catch(e) {
-                console.warn("Could not fetch user groups. Defaulting to user names as groups.", e);
             }
         }
 
@@ -267,19 +286,27 @@
             setLoaderText("Prosesserer og bygger dashboard...");
             
             rawData = bcfArray.map(topic => {
-                let assigneeEmail = topic.assigned_to || '';
-                let assigneeName = assigneeEmail || 'Ikke tildelt';
-                if (assigneeName.includes('@')) assigneeName = assigneeName.split('@')[0];
+                // The raw assigned_to value from BCF (Could be email, could be name)
+                let rawAssignee = topic.assigned_to || '';
+                let assigneeName = rawAssignee || 'Ikke tildelt';
+                let lookupKey = rawAssignee.toLowerCase().trim();
 
-                // Determine the Group
-                let groupName = assigneeName; // Fallback is user's name
+                // Format the display name (strip domain)
+                if (assigneeName.includes('@')) {
+                    assigneeName = assigneeName.split('@')[0];
+                }
+
+                // Determine the Group via the Smart Mapping
+                let groupName = assigneeName; 
                 if (groupsSuccessfullyFetched) {
-                    if (assigneeEmail && userToGroupMap[assigneeEmail.toLowerCase()]) {
-                        groupName = userToGroupMap[assigneeEmail.toLowerCase()];
-                    } else if (assigneeEmail && assigneeName !== 'Ikke tildelt') {
-                        groupName = 'Uten gruppe'; // Has account, but no group assigned in TC
+                    if (rawAssignee && userToGroupMap[lookupKey]) {
+                        groupName = userToGroupMap[lookupKey];
+                    } else if (rawAssignee && userToGroupMap[assigneeName.toLowerCase().trim()]) {
+                        groupName = userToGroupMap[assigneeName.toLowerCase().trim()];
+                    } else if (rawAssignee && assigneeName !== 'Ikke tildelt') {
+                        groupName = 'Uten gruppe'; // Account exists but no TC group
                     } else {
-                        groupName = 'Ikke tildelt'; // Nobody is assigned
+                        groupName = 'Ikke tildelt'; 
                     }
                 }
 
@@ -295,7 +322,6 @@
                 };
             });
 
-            // Extract unique active values for filters
             allGroups =[...new Set(rawData.map(i => i.group))].sort() || [];
             allStatuses =[...new Set(rawData.map(i => i.status))].sort() || [];
             allPriorities =[...new Set(rawData.map(i => i.priority))].sort() || [];
@@ -396,7 +422,7 @@
             let statusCounts = {}, priorityCounts = {}, groupCounts = {};
             
             // Extract ONLY groups that have workload remaining after filters
-            let activeGroups = [...new Set(data.map(i => i.group))].sort();
+            let activeGroups =[...new Set(data.map(i => i.group))].sort();
             
             allStatuses.forEach(s => statusCounts[s] = 0);
             allPriorities.forEach(p => priorityCounts[p] = 0);
@@ -434,7 +460,7 @@
                 const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
                 const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
                 
-                // Format the Assignee text to show their Group clearly
+                // Format Assignee Column
                 let displayAssignee = escapeHtml(issue.assignee);
                 if (groupsSuccessfullyFetched && issue.group !== issue.assignee) {
                     const color = issue.group === 'Uten gruppe' ? '#ef4444' : '#6b7280';
