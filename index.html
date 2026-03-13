@@ -115,7 +115,6 @@
     </div>
 
     <script>
-        // BCF Endpoints
         const BCF_ENDPOINTS =[
             "https://open21.connect.trimble.com",
             "https://bcf.eu.connect.trimble.com",
@@ -123,7 +122,6 @@
             "https://bcf.asia.connect.trimble.com"
         ];
         
-        // General API Endpoints (For User Groups)
         const TC_API_ENDPOINTS =[
             "https://app21.connect.trimble.com",
             "https://app.connect.trimble.com",
@@ -138,7 +136,7 @@
         let currentFilteredData =[]; 
         
         let statusChart = null, priorityChart = null, groupChart = null;
-        let allGroups = [], allStatuses = [], allPriorities = [], allTags =[];
+        let allGroups = [], allStatuses =[], allPriorities = [], allTags =[];
         
         let userToGroupMap = {};
         let groupsSuccessfullyFetched = false;
@@ -202,7 +200,7 @@
         }
 
         // ==========================================
-        // 2. SMART FETCH DATA 
+        // 2. SMART FETCH BCF DATA 
         // ==========================================
         async function fetchDataWithSmartFallback() {
             setLoaderText("Henter BCF Topics fra server...");
@@ -232,49 +230,81 @@
         }
 
         // ==========================================
-        // 3. SECURE FETCH PROJECT GROUPS
+        // 3. BULLETPROOF FETCH PROJECT GROUPS
         // ==========================================
         async function fetchProjectGroups() {
             setLoaderText("Henter prosjektets brukergrupper...");
             
             for (const tcBase of TC_API_ENDPOINTS) {
                 try {
-                    const url = `${tcBase}/tc/api/2.0/projects/${encodeURIComponent(currentProjectId)}/users`;
-                    const resp = await fetch(url, {
-                        method: "GET",
-                        headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
+                    let foundGroups = false;
+                    
+                    // Attempt 1: Fetch via standard Users endpoint
+                    const urlUsers = `${tcBase}/tc/api/2.0/projects/${encodeURIComponent(currentProjectId)}/users`;
+                    const respUsers = await fetch(urlUsers, {
+                        method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
                     });
 
-                    if (resp.ok) {
-                        const users = await resp.json();
-                        
-                        // Map multiple identifiers (Email, Username, and Full Name) to ensure a match!
+                    if (respUsers.ok) {
+                        const users = await respUsers.json();
                         users.forEach(u => {
-                            let gName = null;
-                            if (u.groups && u.groups.length > 0) {
-                                gName = u.groups.map(g => g.name).join(' & ');
-                            }
-                            
-                            if (gName) {
-                                // 1. Map by full email
-                                if (u.email) {
-                                    userToGroupMap[u.email.toLowerCase().trim()] = gName;
-                                    // 2. Map by username (everything before the @)
-                                    userToGroupMap[u.email.split('@')[0].toLowerCase().trim()] = gName;
-                                }
-                                // 3. Map by explicit First/Last Name
-                                if (u.firstName || u.lastName) {
-                                    const fullName = `${u.firstName || ''} ${u.lastName || ''}`.trim().toLowerCase();
-                                    userToGroupMap[fullName] = gName;
+                            // Trimble hides groups in 'userGroups' instead of 'groups'
+                            const grps = u.userGroups || u.groups ||[];
+                            if (grps.length > 0) {
+                                const gName = grps.map(g => g.name || g.groupName).filter(Boolean).join(' & ');
+                                if (gName) {
+                                    const mapKey = (k) => { if(k) userToGroupMap[String(k).toLowerCase().trim()] = gName; };
+                                    
+                                    mapKey(u.email);
+                                    if (u.email && u.email.includes('@')) mapKey(u.email.split('@')[0]);
+                                    mapKey(`${u.firstName || ''} ${u.lastName || ''}`);
+                                    mapKey(u.name);
+                                    foundGroups = true;
                                 }
                             }
                         });
-                        
+                    }
+
+                    // Attempt 2: Fetch via Groups endpoint (Double security)
+                    const urlGroups = `${tcBase}/tc/api/2.0/projects/${encodeURIComponent(currentProjectId)}/groups`;
+                    const respGroups = await fetch(urlGroups, {
+                        method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
+                    });
+
+                    if (respGroups.ok) {
+                        const groups = await respGroups.json();
+                        groups.forEach(g => {
+                            const gName = g.name;
+                            if (gName && Array.isArray(g.members)) {
+                                g.members.forEach(m => {
+                                    const mapKey = (k) => { 
+                                        if(k) {
+                                            let cleanK = String(k).toLowerCase().trim();
+                                            // Merge groups if user is in multiple
+                                            if (userToGroupMap[cleanK] && !userToGroupMap[cleanK].includes(gName)) {
+                                                userToGroupMap[cleanK] += ` & ${gName}`;
+                                            } else {
+                                                userToGroupMap[cleanK] = gName;
+                                            }
+                                            foundGroups = true;
+                                        }
+                                    };
+                                    
+                                    mapKey(m.email);
+                                    if (m.email && m.email.includes('@')) mapKey(m.email.split('@')[0]);
+                                    mapKey(`${m.firstName || ''} ${m.lastName || ''}`);
+                                    mapKey(m.name);
+                                });
+                            }
+                        });
+                    }
+
+                    if (foundGroups) {
                         groupsSuccessfullyFetched = true;
-                        break; // Stop loop once successfully fetched
+                        break; 
                     }
                 } catch(e) {
-                    console.warn(`Failed to fetch groups from ${tcBase}`, e);
+                    console.warn(`Could not fetch groups from ${tcBase}`, e);
                 }
             }
         }
@@ -286,7 +316,6 @@
             setLoaderText("Prosesserer og bygger dashboard...");
             
             rawData = bcfArray.map(topic => {
-                // The raw assigned_to value from BCF (Could be email, could be name)
                 let rawAssignee = topic.assigned_to || '';
                 let assigneeName = rawAssignee || 'Ikke tildelt';
                 let lookupKey = rawAssignee.toLowerCase().trim();
@@ -324,7 +353,7 @@
 
             allGroups =[...new Set(rawData.map(i => i.group))].sort() || [];
             allStatuses =[...new Set(rawData.map(i => i.status))].sort() || [];
-            allPriorities =[...new Set(rawData.map(i => i.priority))].sort() || [];
+            allPriorities =[...new Set(rawData.map(i => i.priority))].sort() ||[];
             allTags =[...new Set(rawData.flatMap(i => i.tags))].sort() ||[];
 
             populateSelect('groupFilter', allGroups);
@@ -421,8 +450,7 @@
         function updateCharts(data) {
             let statusCounts = {}, priorityCounts = {}, groupCounts = {};
             
-            // Extract ONLY groups that have workload remaining after filters
-            let activeGroups =[...new Set(data.map(i => i.group))].sort();
+            let activeGroups = [...new Set(data.map(i => i.group))].sort();
             
             allStatuses.forEach(s => statusCounts[s] = 0);
             allPriorities.forEach(p => priorityCounts[p] = 0);
@@ -437,7 +465,6 @@
             statusChart.data.datasets[0].data = allStatuses.map(s => statusCounts[s]); statusChart.update();
             priorityChart.data.datasets[0].data = allPriorities.map(p => priorityCounts[p]); priorityChart.update();
 
-            // Update Bar Chart labels to only show Groups that currently have > 0 workload
             groupChart.data.labels = activeGroups;
             allStatuses.forEach((status, index) => { 
                 if(groupChart.data.datasets[index]) groupChart.data.datasets[index].data = activeGroups.map(g => groupCounts[g][status]); 
@@ -460,7 +487,6 @@
                 const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
                 const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
                 
-                // Format Assignee Column
                 let displayAssignee = escapeHtml(issue.assignee);
                 if (groupsSuccessfullyFetched && issue.group !== issue.assignee) {
                     const color = issue.group === 'Uten gruppe' ? '#ef4444' : '#6b7280';
@@ -509,8 +535,7 @@
                 ].join(",");
             });
 
-            // \uFEFF ensures Excel reads UTF-8 characters properly (æ, ø, å)
-            const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\n");
+            const csvContent = "\uFEFF" +[headers.join(","), ...rows].join("\n");
             
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
