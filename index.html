@@ -83,7 +83,7 @@
 
         <!-- Filter Controls -->
         <div class="filter-panel">
-            <div class="filter-group"><label>User Group</label><select id="groupFilter" onchange="applyFilters()"><option value="All">All Groups</option></select></div>
+            <div class="filter-group"><label>Assignee</label><select id="assigneeFilter" onchange="applyFilters()"><option value="All">All Assignees</option></select></div>
             <div class="filter-group"><label>Status</label><select id="statusFilter" onchange="applyFilters()"><option value="All">All Statuses</option></select></div>
             <div class="filter-group"><label>Priority</label><select id="priorityFilter" onchange="applyFilters()"><option value="All">All Priorities</option></select></div>
             <div class="filter-group"><label>Tags / Fag</label><select id="tagFilter" onchange="applyFilters()"><option value="All">All Tags</option></select></div>
@@ -96,12 +96,12 @@
         <div class="dashboard">
             <div class="card"><div class="card-title">Status Distribution</div><div class="chart-container"><canvas id="statusChart"></canvas></div></div>
             <div class="card"><div class="card-title">Priority Levels</div><div class="chart-container"><canvas id="priorityChart"></canvas></div></div>
-            <div class="card full-width"><div class="card-title">Workload by User Group</div><div class="chart-container" style="height: 350px;"><canvas id="groupChart"></canvas></div></div>
+            <div class="card full-width"><div class="card-title">Workload by Assignee</div><div class="chart-container" style="height: 350px;"><canvas id="assigneeChart"></canvas></div></div>
             <div class="card full-width">
                 <div class="card-title">Matching Issues (<span id="issueCount">0</span>)</div>
                 <div class="table-container">
                     <table id="issueTable">
-                        <thead><tr><th>Topic Title / Link</th><th>User Group</th><th>Status</th><th>Priority</th><th>Tags</th></tr></thead>
+                        <thead><tr><th>Topic Title / Link</th><th>Assignee</th><th>Status</th><th>Priority</th><th>Tags</th></tr></thead>
                         <tbody id="tableBody"></tbody>
                     </table>
                 </div>
@@ -115,7 +115,6 @@
     </div>
 
     <script>
-        // BCF Endpoints
         const BCF_ENDPOINTS =[
             "https://open21.connect.trimble.com",
             "https://bcf.eu.connect.trimble.com",
@@ -124,16 +123,12 @@
         ];
 
         let API = null, accessToken = null, currentProjectId = null;
-        let activeEndpoint = "https://open21.connect.trimble.com"; 
         
         let rawData = [];
-        let currentFilteredData =[]; 
+        let currentFilteredData =[]; // Keeps track of active data for CSV Export
         
-        let statusChart = null, priorityChart = null, groupChart = null;
-        let allGroups = [], allStatuses = [], allPriorities = [], allTags =[];
-        
-        let userToGroupMap = {};
-        let groupsSuccessfullyFetched = false;
+        let statusChart = null, priorityChart = null, assigneeChart = null;
+        let allAssignees =[], allStatuses =[], allPriorities =[], allTags =[];
 
         const colorPalette = {
             'New': '#3b82f6', 'Open': '#3b82f6', 'Active': '#3b82f6',
@@ -154,7 +149,10 @@
 
         function setLoaderText(text) { document.getElementById('loader-text').innerText = text; }
         function logError(msg) { console.error(msg); document.getElementById('error-log').innerText += msg + "\n"; document.getElementById('spinner').style.display = 'none'; }
-        function escapeHtml(str) { return String(str || "").replace(/[&<>'"]/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[match]); }
+        
+        function escapeHtml(str) {
+            return String(str || "").replace(/[&<>'"]/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[match]);
+        }
 
         function extractTags(topic) {
             const candidates =[];
@@ -194,7 +192,7 @@
         }
 
         // ==========================================
-        // 2. SMART FETCH BCF DATA 
+        // 2. SMART FETCH DATA 
         // ==========================================
         async function fetchDataWithSmartFallback() {
             setLoaderText("Henter BCF Topics fra server...");
@@ -202,11 +200,11 @@
 
             for (const base of BCF_ENDPOINTS) {
                 try {
+                    setLoaderText(`Prøver BCF endpoint: ${base}...`);
                     const url = `${base}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics`;
                     const resp = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" } });
 
                     if (resp.ok) {
-                        activeEndpoint = base; 
                         const json = await resp.json();
                         if (Array.isArray(json)) fetchedArray = json;
                         else if (json && Array.isArray(json.topics)) fetchedArray = json.topics;
@@ -214,124 +212,40 @@
                         else fetchedArray =[]; 
                         break; 
                     }
-                } catch (err) {}
+                } catch (err) { console.warn(`Endpoint feilet: ${base}`, err); }
             }
 
             if (fetchedArray === null) return logError("Klarte ikke å hente topics fra noen kjente BCF servere.");
-            
-            await fetchProjectGroups(); 
             processDataSafely(fetchedArray);
         }
 
         // ==========================================
-        // 3. BULLETPROOF FETCH PROJECT GROUPS
-        // ==========================================
-        async function fetchProjectGroups() {
-            setLoaderText("Henter prosjektets brukergrupper...");
-            
-            // Smart matching to deduce the correct core API based on BCF API location
-            let primaryCore = "https://app.connect.trimble.com";
-            if (activeEndpoint.includes("open21")) primaryCore = "https://app21.connect.trimble.com";
-            else if (activeEndpoint.includes("eu.")) primaryCore = "https://europe.connect.trimble.com";
-            else if (activeEndpoint.includes("asia.")) primaryCore = "https://asia.connect.trimble.com";
-
-            const TC_API_ENDPOINTS =[
-                primaryCore,
-                "https://app21.connect.trimble.com",
-                "https://europe.connect.trimble.com",
-                "https://app.connect.trimble.com"
-            ];
-            
-            for (const tcBase of TC_API_ENDPOINTS) {
-                try {
-                    let foundGroups = false;
-                    const urlUsers = `${tcBase}/tc/api/2.0/projects/${encodeURIComponent(currentProjectId)}/users`;
-                    
-                    const respUsers = await fetch(urlUsers, {
-                        method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
-                    });
-
-                    if (respUsers.ok) {
-                        const users = await respUsers.json();
-                        
-                        users.forEach(u => {
-                            // Extract groups (Trimble stores this in `groups` or `userGroups`)
-                            const grps = u.userGroups || u.groups ||[];
-                            
-                            if (grps.length > 0) {
-                                const gName = grps.map(g => g.name || g.groupName).filter(Boolean).join(' & ');
-                                
-                                if (gName) {
-                                    const mapKey = (k) => { if(k) userToGroupMap[String(k).toLowerCase().trim()] = gName; };
-                                    
-                                    mapKey(u.email);
-                                    if (u.email && u.email.includes('@')) mapKey(u.email.split('@')[0]);
-                                    mapKey(`${u.firstName || ''} ${u.lastName || ''}`);
-                                    mapKey(u.name);
-                                    
-                                    foundGroups = true;
-                                }
-                            }
-                        });
-                    }
-
-                    if (foundGroups) {
-                        groupsSuccessfullyFetched = true;
-                        break; 
-                    }
-                } catch(e) {
-                    console.warn(`Could not fetch groups from ${tcBase}`, e);
-                }
-            }
-        }
-
-        // ==========================================
-        // 4. SAFE DATA PARSING & DASHBOARD INIT
+        // 3. SAFE DATA PARSING & DASHBOARD INIT
         // ==========================================
         function processDataSafely(bcfArray) {
             setLoaderText("Prosesserer og bygger dashboard...");
             
             rawData = bcfArray.map(topic => {
-                let rawAssignee = topic.assigned_to || '';
-                let assigneeName = rawAssignee || 'Ikke tildelt';
-                let lookupKey = rawAssignee.toLowerCase().trim();
-
-                if (assigneeName.includes('@')) {
-                    assigneeName = assigneeName.split('@')[0];
-                }
-
-                // Strictly assign the group name
-                let groupName = assigneeName; 
-                if (groupsSuccessfullyFetched) {
-                    if (!rawAssignee) {
-                        groupName = 'Ikke tildelt';
-                    } else if (userToGroupMap[lookupKey]) {
-                        groupName = userToGroupMap[lookupKey];
-                    } else if (userToGroupMap[assigneeName.toLowerCase().trim()]) {
-                        groupName = userToGroupMap[assigneeName.toLowerCase().trim()];
-                    } else {
-                        groupName = 'Uten gruppe'; 
-                    }
-                }
+                let assigneeName = topic.assigned_to || 'Ikke tildelt';
+                if (assigneeName.includes('@')) assigneeName = assigneeName.split('@')[0];
 
                 const guid = topic.guid || topic.topic_guid || topic.id || '';
                 return {
                     id: topic.title || topic.topic_title || guid || 'Uten tittel',
                     guid: guid,
-                    assignee: assigneeName, // Keep internal, but won't show in UI
-                    group: groupName,       // The star of the show
+                    assignee: assigneeName,
                     status: topic.topic_status || topic.status || 'Open',
                     priority: topic.priority || 'Normal',
                     tags: extractTags(topic)
                 };
             });
 
-            allGroups =[...new Set(rawData.map(i => i.group))].sort() || [];
-            allStatuses =[...new Set(rawData.map(i => i.status))].sort() || [];
-            allPriorities =[...new Set(rawData.map(i => i.priority))].sort() || [];
+            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort() ||[];
+            allStatuses =[...new Set(rawData.map(i => i.status))].sort() ||[];
+            allPriorities =[...new Set(rawData.map(i => i.priority))].sort() ||[];
             allTags =[...new Set(rawData.flatMap(i => i.tags))].sort() ||[];
 
-            populateSelect('groupFilter', allGroups);
+            populateSelect('assigneeFilter', allAssignees);
             populateSelect('statusFilter', allStatuses);
             populateSelect('priorityFilter', allPriorities);
             populateSelect('tagFilter', allTags);
@@ -355,7 +269,7 @@
         function initCharts() {
             if(statusChart) statusChart.destroy();
             if(priorityChart) priorityChart.destroy();
-            if(groupChart) groupChart.destroy();
+            if(assigneeChart) assigneeChart.destroy();
 
             const chartOptions = (filterId) => ({
                 responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } },
@@ -381,16 +295,16 @@
             });
 
             const datasets = allStatuses.map(status => ({ label: status, data:[], backgroundColor: getColor(status) }));
-            groupChart = new Chart(document.getElementById('groupChart').getContext('2d'), {
-                type: 'bar', data: { labels: allGroups, datasets: datasets },
+            assigneeChart = new Chart(document.getElementById('assigneeChart').getContext('2d'), {
+                type: 'bar', data: { labels: allAssignees, datasets: datasets },
                 options: {
                     responsive: true, maintainAspectRatio: false,
                     scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } },
                     plugins: { tooltip: { mode: 'index', intersect: false } },
                     onClick: (event, elements) => {
                         if (elements.length > 0) {
-                            const label = groupChart.data.labels[elements[0].index];
-                            const select = document.getElementById('groupFilter');
+                            const label = assigneeChart.data.labels[elements[0].index];
+                            const select = document.getElementById('assigneeFilter');
                             select.value = select.value === label ? 'All' : label;
                             applyFilters();
                         }
@@ -400,10 +314,10 @@
             });
         }
 
-        function resetFilters() {['groupFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All'); applyFilters(); }
+        function resetFilters() {['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All'); applyFilters(); }
 
         function applyFilters() {
-            const filters = { group: document.getElementById('groupFilter').value, status: document.getElementById('statusFilter').value, priority: document.getElementById('priorityFilter').value, tag: document.getElementById('tagFilter').value };
+            const filters = { assignee: document.getElementById('assigneeFilter').value, status: document.getElementById('statusFilter').value, priority: document.getElementById('priorityFilter').value, tag: document.getElementById('tagFilter').value };
 
             Object.keys(filters).forEach(key => {
                 const el = document.getElementById(key + 'Filter');
@@ -412,7 +326,7 @@
             });
 
             currentFilteredData = rawData.filter(issue => {
-                return (filters.group === 'All' || issue.group === filters.group) &&
+                return (filters.assignee === 'All' || issue.assignee === filters.assignee) &&
                        (filters.status === 'All' || issue.status === filters.status) &&
                        (filters.priority === 'All' || issue.priority === filters.priority) &&
                        (filters.tag === 'All' || issue.tags.includes(filters.tag));
@@ -423,28 +337,34 @@
         }
 
         function updateCharts(data) {
-            let statusCounts = {}, priorityCounts = {}, groupCounts = {};
+            let statusCounts = {}, priorityCounts = {}, assigneeCounts = {};
             
-            let activeGroups = [...new Set(data.map(i => i.group))].sort();
-            
+            // Extract ONLY the assignees that are present in the active filtered data
+            let activeAssignees =[...new Set(data.map(i => i.assignee))].sort();
+
             allStatuses.forEach(s => statusCounts[s] = 0);
             allPriorities.forEach(p => priorityCounts[p] = 0);
-            activeGroups.forEach(g => { groupCounts[g] = {}; allStatuses.forEach(s => groupCounts[g][s] = 0); });
+            
+            // Setup count buckets for active assignees only
+            activeAssignees.forEach(a => { assigneeCounts[a] = {}; allStatuses.forEach(s => assigneeCounts[a][s] = 0); });
 
             data.forEach(issue => {
                 if(statusCounts[issue.status] !== undefined) statusCounts[issue.status]++;
                 if(priorityCounts[issue.priority] !== undefined) priorityCounts[issue.priority]++;
-                if(groupCounts[issue.group] && groupCounts[issue.group][issue.status] !== undefined) groupCounts[issue.group][issue.status]++;
+                if(assigneeCounts[issue.assignee] && assigneeCounts[issue.assignee][issue.status] !== undefined) assigneeCounts[issue.assignee][issue.status]++;
             });
 
             statusChart.data.datasets[0].data = allStatuses.map(s => statusCounts[s]); statusChart.update();
             priorityChart.data.datasets[0].data = allPriorities.map(p => priorityCounts[p]); priorityChart.update();
 
-            groupChart.data.labels = activeGroups;
+            // Update Assignee Chart to hide empty names dynamically
+            assigneeChart.data.labels = activeAssignees;
             allStatuses.forEach((status, index) => { 
-                if(groupChart.data.datasets[index]) groupChart.data.datasets[index].data = activeGroups.map(g => groupCounts[g][status]); 
+                if(assigneeChart.data.datasets[index]) {
+                    assigneeChart.data.datasets[index].data = activeAssignees.map(a => assigneeCounts[a][status]); 
+                }
             });
-            groupChart.update();
+            assigneeChart.update();
         }
 
         function updateTable(data) {
@@ -460,9 +380,9 @@
             data.forEach(issue => {
                 const tr = document.createElement('tr');
                 const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
-                const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
                 
-                // Purely show the user group, as requested
+                const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
+
                 tr.innerHTML = `
                     <td>
                         <a href="${topic3dUrl}" target="_blank" class="issue-link" title="Åpne i 3D Viewer (Klikk på miniatyrbildet i Topics panelet for å laste modellene)">
@@ -470,7 +390,7 @@
                             <span class="link-icon">↗</span>
                         </a>
                     </td>
-                    <td>${escapeHtml(issue.group)}</td>
+                    <td>${escapeHtml(issue.assignee)}</td>
                     <td><span class="badge" style="background-color: ${getColor(issue.status)}">${escapeHtml(issue.status)}</span></td>
                     <td><span class="badge" style="background-color: ${getColor(issue.priority)}">${escapeHtml(issue.priority)}</span></td>
                     <td>${tagsHtml}</td>
@@ -480,7 +400,7 @@
         }
         
         // ==========================================
-        // 5. CSV EXPORT FUNCTIONALITY
+        // 4. CSV EXPORT FUNCTIONALITY
         // ==========================================
         function exportCSV() {
             if (currentFilteredData.length === 0) {
@@ -488,16 +408,16 @@
                 return;
             }
 
-            const headers =["Topic Title / ID", "Assignee (Name)", "User Group", "Status", "Priority", "Tags", "Trimble 3D Link"];
+            const headers =["Title / ID", "Assignee", "Status", "Priority", "Tags", "Trimble 3D Link"];
             
             const rows = currentFilteredData.map(issue => {
                 const tagsStr = issue.tags.join(" | ");
                 const link = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
                 
+                // Wrap in quotes and escape internal quotes to prevent CSV breaking
                 return[
                     `"${issue.id.replace(/"/g, '""')}"`,
                     `"${issue.assignee.replace(/"/g, '""')}"`,
-                    `"${issue.group.replace(/"/g, '""')}"`,
                     `"${issue.status}"`,
                     `"${issue.priority}"`,
                     `"${tagsStr.replace(/"/g, '""')}"`,
@@ -505,7 +425,8 @@
                 ].join(",");
             });
 
-            const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\n");
+            // \uFEFF ensures Excel reads UTF-8 characters properly (æ, ø, å)
+            const csvContent = "\uFEFF" +[headers.join(","), ...rows].join("\n");
             
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
