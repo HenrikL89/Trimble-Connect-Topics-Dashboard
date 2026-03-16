@@ -54,7 +54,7 @@
         .tag-badge { display: inline-block; padding: 3px 6px; background-color: #e5e7eb; color: #4b5563; border-radius: 4px; font-size: 11px; margin: 2px; }
         
         /* Deep Link Styling */
-        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
         .issue-link:hover { text-decoration: underline; color: #2563eb; }
         .link-icon { font-size: 12px; }
 
@@ -117,17 +117,28 @@
 
     <script>
         // ==========================================
-        // MANUAL GROUP OVERRIDES (FALLBACK)
-        // If Trimble's API blocks the groups, simply assign them here.
-        // Format: "username": "Group Name"
+        // 🟢 MANUAL USER GROUP MAPPING 🟢
+        // Because Trimble Connect actively blocks the Dashboard from reading 
+        // the User Groups (CORS security), type the user's groups here.
+        // If a user is not in this list, the chart will fall back to their name.
         // ==========================================
         const MANUAL_GROUP_OVERRIDES = {
-            "arild.pedersen": "Gruppenavn A",
-            "asbjorn.gjerding-smith": "Gruppenavn B",
-            "eivind.randen": "Gruppenavn C",
-            "ida.frojmark": "Gruppenavn A",
-            "jens.beckstrom": "Gruppenavn B"
-            // Add as many as you need here!
+            "arild.pedersen": "Vei",
+            "asbjorn.gjerding-smith": "Vei",
+            "eivind.randen": "Bane",
+            "fredrik.munch.starheim": "Bane",
+            "henrik.lien": "Prosjektledelse",
+            "ida.frojmark": "Bane",
+            "ingvild.odegard.rosbach": "Bane",
+            "jens.beckstrom": "Vei",
+            "jon.havard.lien": "Vann og Avløp",
+            "jonas.ronglan.lindgard": "Geoteknikk",
+            "knut.johan.nygard": "Vei",
+            "kristoffer.bjornoy.weaver": "Geoteknikk",
+            "magnus.norgren": "Bane",
+            "oivind.skullerud": "Vei",
+            "siv.hansen.dawes": "Konstruksjon"
+            // Example: "username": "Your Group Name"
         };
 
         const BCF_ENDPOINTS =[
@@ -138,16 +149,16 @@
         ];
 
         let API = null, accessToken = null, currentProjectId = null;
-        let activeEndpoint = "https://open21.connect.trimble.com"; 
+        let isFetching = false; // Lock to prevent double-execution
         
-        let rawData =[];
+        let rawData = [];
         let currentFilteredData =[]; 
         
         let statusChart = null, priorityChart = null, assigneeChart = null;
         let allAssignees =[], allStatuses =[], allPriorities =[], allTags =[];
         
-        let userToGroupMap = { ...MANUAL_GROUP_OVERRIDES }; // Starts with manual overrides
-        let groupsSuccessfullyFetched = Object.keys(MANUAL_GROUP_OVERRIDES).length > 0;
+        // This holds Trimble's API groups (if it doesn't fail) + our Manual overrides
+        let userToGroupMap = { ...MANUAL_GROUP_OVERRIDES }; 
 
         const colorPalette = {
             'New': '#3b82f6', 'Open': '#3b82f6', 'Active': '#3b82f6',
@@ -196,18 +207,23 @@
                 setLoaderText("Ber om tilgang (accessToken)...");
                 const permissionResult = await API.extension.requestPermission("accesstoken");
                 handleAccessTokenPayload(permissionResult);
-            } catch (err) { console.error(err); }
+            } catch (err) { console.error("Init Error:", err); }
         }
 
         function handleAccessTokenPayload(payload) {
             if (!payload || payload === "pending" || payload === "denied") return;
             if (typeof payload === "string") accessToken = payload;
             else if (typeof payload === "object" && payload.accessToken) accessToken = payload.accessToken;
-            if (accessToken) fetchDataWithSmartFallback();
+            
+            // Prevent the infinite loading loop by ensuring we only run fetch once
+            if (accessToken && !isFetching) {
+                isFetching = true;
+                fetchDataWithSmartFallback();
+            }
         }
 
         // ==========================================
-        // 2. SMART FETCH BCF DATA 
+        // 2. SMART FETCH DATA 
         // ==========================================
         async function fetchDataWithSmartFallback() {
             setLoaderText("Henter BCF Topics fra server...");
@@ -219,5 +235,287 @@
                     const resp = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" } });
 
                     if (resp.ok) {
-                        activeEndpoint = base; 
-                        co
+                        const json = await resp.json();
+                        if (Array.isArray(json)) fetchedArray = json;
+                        else if (json && Array.isArray(json.topics)) fetchedArray = json.topics;
+                        else if (json && Array.isArray(json.value)) fetchedArray = json.value;
+                        else fetchedArray =[]; 
+                        break; 
+                    }
+                } catch (err) {}
+            }
+
+            if (fetchedArray === null) {
+                document.getElementById('loader-text').innerText = "Klarte ikke å koble til BCF server.";
+                return;
+            }
+            
+            // Attempt to fetch Trimble Groups, but apply a strict 2-second timeout 
+            // so it never gets stuck in an infinite loop!
+            await fetchProjectGroupsNative(); 
+            
+            processDataSafely(fetchedArray);
+        }
+
+        // ==========================================
+        // 3. FETCH USER GROUPS (WITH TIMEOUT PREVENTER)
+        // ==========================================
+        async function fetchProjectGroupsNative() {
+            setLoaderText("Henter brukergrupper (Dette tar opptil 2 sekunder)...");
+            try {
+                // If Trimble Connect's API hangs and ignores us, Promise.race forces it to give up after 2000ms
+                const members = await Promise.race([
+                    API.project.getMembers(),
+                    new Promise((resolve) => setTimeout(() => resolve(null), 2000))
+                ]);
+
+                if (members && Array.isArray(members)) {
+                    members.forEach(u => {
+                        let gName = null;
+                        const grps = u.groups || u.userGroups ||[];
+                        
+                        // Ignore "Norconsult"
+                        const validGrps = grps.map(g => (typeof g === 'object' ? (g.name || g.groupName) : g))
+                                              .filter(n => n && typeof n === 'string' && n.toLowerCase() !== 'norconsult');
+                        
+                        if (validGrps.length > 0) gName = validGrps.join(' & ');
+
+                        // Save mapping
+                        if (gName) {
+                            const mapKey = (k) => { if (k) userToGroupMap[String(k).toLowerCase().trim()] = gName; };
+                            mapKey(u.email);
+                            if (u.email && u.email.includes('@')) mapKey(u.email.split('@')[0]);
+                            mapKey(u.name);
+                        }
+                    });
+                } else {
+                    console.warn("Trimble Group API blokkert eller utilgjengelig. Bruker Manuell Mapping (MANUAL_GROUP_OVERRIDES).");
+                }
+            } catch(e) {
+                console.warn("Feilet å hente grupper, faller tilbake på manuell overstyring.");
+            }
+        }
+
+        // ==========================================
+        // 4. SAFE DATA PARSING & DASHBOARD INIT
+        // ==========================================
+        function processDataSafely(bcfArray) {
+            setLoaderText("Prosesserer og bygger dashboard...");
+            
+            rawData = bcfArray.map(topic => {
+                let rawAssignee = topic.assigned_to || '';
+                let assigneeName = rawAssignee || 'Ikke tildelt';
+                
+                let lookupEmail = rawAssignee.toLowerCase().trim();
+                let lookupPrefix = lookupEmail.includes('@') ? lookupEmail.split('@')[0] : lookupEmail;
+
+                // Format display name for Table (e.g. henrik.lien)
+                if (assigneeName.includes('@')) {
+                    assigneeName = assigneeName.split('@')[0];
+                }
+
+                // Determine Display Group exclusively for the Bar Chart
+                let displayGroup = assigneeName; // Defaults to their individual name
+                
+                if (rawAssignee) {
+                    // Check our robust mapping (Manual Overrides + API)
+                    if (userToGroupMap[lookupPrefix]) {
+                        displayGroup = userToGroupMap[lookupPrefix];
+                    } else if (userToGroupMap[lookupEmail]) {
+                        displayGroup = userToGroupMap[lookupEmail];
+                    }
+                }
+
+                const guid = topic.guid || topic.topic_guid || topic.id || '';
+                return {
+                    id: topic.title || topic.topic_title || guid || 'Uten tittel',
+                    guid: guid,
+                    assignee: assigneeName,      // Used for Filter, Table, CSV
+                    displayGroup: displayGroup,  // Used for Bar Chart Grouping ONLY
+                    status: topic.topic_status || topic.status || 'Open',
+                    priority: topic.priority || 'Normal',
+                    tags: extractTags(topic)
+                };
+            });
+
+            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort();
+            allStatuses =[...new Set(rawData.map(i => i.status))].sort();
+            allPriorities =[...new Set(rawData.map(i => i.priority))].sort();
+            allTags =[...new Set(rawData.flatMap(i => i.tags))].sort();
+
+            populateSelect('assigneeFilter', allAssignees);
+            populateSelect('statusFilter', allStatuses);
+            populateSelect('priorityFilter', allPriorities);
+            populateSelect('tagFilter', allTags);
+
+            document.getElementById('loader').style.display = 'none';
+            document.getElementById('main-content').style.display = 'block';
+
+            initCharts();
+            applyFilters();
+        }
+
+        function populateSelect(id, items) {
+            const select = document.getElementById(id);
+            if (!select) return;
+            select.innerHTML = select.options[0].outerHTML;
+            items.forEach(item => { const opt = document.createElement('option'); opt.value = item; opt.textContent = item; select.appendChild(opt); });
+        }
+
+        const handleChartHover = (event, elements) => { event.native.target.style.cursor = elements.length ? 'pointer' : 'default'; };
+
+        function initCharts() {
+            if(statusChart) statusChart.destroy();
+            if(priorityChart) priorityChart.destroy();
+            if(assigneeChart) assigneeChart.destroy();
+
+            const chartOptions = (filterId) => ({
+                responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } },
+                onClick: (event, elements, chart) => {
+                    if (elements.length > 0) {
+                        const label = chart.data.labels[elements[0].index];
+                        const select = document.getElementById(filterId);
+                        select.value = select.value === label ? 'All' : label;
+                        applyFilters();
+                    }
+                },
+                onHover: handleChartHover
+            });
+
+            statusChart = new Chart(document.getElementById('statusChart').getContext('2d'), {
+                type: 'doughnut', data: { labels: allStatuses, datasets:[{ data: [], backgroundColor: allStatuses.map(getColor) }] },
+                options: chartOptions('statusFilter')
+            });
+
+            priorityChart = new Chart(document.getElementById('priorityChart').getContext('2d'), {
+                type: 'pie', data: { labels: allPriorities, datasets: [{ data: [], backgroundColor: allPriorities.map(getColor) }] },
+                options: chartOptions('priorityFilter')
+            });
+
+            const datasets = allStatuses.map(status => ({ label: status, data:[], backgroundColor: getColor(status) }));
+            assigneeChart = new Chart(document.getElementById('assigneeChart').getContext('2d'), {
+                type: 'bar', data: { labels:[], datasets: datasets },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } },
+                    plugins: { tooltip: { mode: 'index', intersect: false } }
+                }
+            });
+        }
+
+        function resetFilters() {['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All'); applyFilters(); }
+
+        function applyFilters() {
+            const filters = { assignee: document.getElementById('assigneeFilter').value, status: document.getElementById('statusFilter').value, priority: document.getElementById('priorityFilter').value, tag: document.getElementById('tagFilter').value };
+
+            Object.keys(filters).forEach(key => {
+                const el = document.getElementById(key + 'Filter');
+                if (filters[key] !== 'All') { el.style.borderColor = '#3b82f6'; el.style.backgroundColor = '#eff6ff'; el.style.fontWeight = '600'; } 
+                else { el.style.borderColor = '#d1d5db'; el.style.backgroundColor = '#f9fafb'; el.style.fontWeight = '400'; }
+            });
+
+            currentFilteredData = rawData.filter(issue => {
+                return (filters.assignee === 'All' || issue.assignee === filters.assignee) &&
+                       (filters.status === 'All' || issue.status === filters.status) &&
+                       (filters.priority === 'All' || issue.priority === filters.priority) &&
+                       (filters.tag === 'All' || issue.tags.includes(filters.tag));
+            });
+
+            updateCharts(currentFilteredData);
+            updateTable(currentFilteredData);
+        }
+
+        function updateCharts(data) {
+            let statusCounts = {}, priorityCounts = {}, groupCounts = {};
+            
+            // Bar Chart uses 'displayGroup'
+            let activeGroups = [...new Set(data.map(i => i.displayGroup))].sort();
+
+            allStatuses.forEach(s => statusCounts[s] = 0);
+            allPriorities.forEach(p => priorityCounts[p] = 0);
+            activeGroups.forEach(g => { groupCounts[g] = {}; allStatuses.forEach(s => groupCounts[g][s] = 0); });
+
+            data.forEach(issue => {
+                if(statusCounts[issue.status] !== undefined) statusCounts[issue.status]++;
+                if(priorityCounts[issue.priority] !== undefined) priorityCounts[issue.priority]++;
+                if(groupCounts[issue.displayGroup] && groupCounts[issue.displayGroup][issue.status] !== undefined) {
+                    groupCounts[issue.displayGroup][issue.status]++;
+                }
+            });
+
+            statusChart.data.datasets[0].data = allStatuses.map(s => statusCounts[s]); statusChart.update();
+            priorityChart.data.datasets[0].data = allPriorities.map(p => priorityCounts[p]); priorityChart.update();
+
+            assigneeChart.data.labels = activeGroups;
+            allStatuses.forEach((status, index) => { 
+                if(assigneeChart.data.datasets[index]) {
+                    assigneeChart.data.datasets[index].data = activeGroups.map(g => groupCounts[g][status]); 
+                }
+            });
+            assigneeChart.update();
+        }
+
+        function updateTable(data) {
+            const tbody = document.getElementById('tableBody');
+            document.getElementById('issueCount').textContent = data.length;
+            tbody.innerHTML = ''; 
+
+            if(data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 20px;">Ingen topics matcher filteret.</td></tr>';
+                return;
+            }
+
+            data.forEach(issue => {
+                const tr = document.createElement('tr');
+                const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
+                const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
+
+                tr.innerHTML = `
+                    <td>
+                        <a href="${topic3dUrl}" target="_blank" class="issue-link" title="Åpne i 3D Viewer">
+                            ${escapeHtml(issue.id)}
+                            <span class="link-icon">↗</span>
+                        </a>
+                    </td>
+                    <td>${escapeHtml(issue.assignee)}</td>
+                    <td><span class="badge" style="background-color: ${getColor(issue.status)}">${escapeHtml(issue.status)}</span></td>
+                    <td><span class="badge" style="background-color: ${getColor(issue.priority)}">${escapeHtml(issue.priority)}</span></td>
+                    <td>${tagsHtml}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+        
+        function exportCSV() {
+            if (currentFilteredData.length === 0) { alert("Ingen data å eksportere."); return; }
+
+            const headers =["Title / ID", "Assignee", "Status", "Priority", "Tags", "Trimble 3D Link"];
+            const rows = currentFilteredData.map(issue => {
+                const tagsStr = issue.tags.join(" | ");
+                const link = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
+                return[
+                    `"${issue.id.replace(/"/g, '""')}"`,
+                    `"${issue.assignee.replace(/"/g, '""')}"`,
+                    `"${issue.status}"`,
+                    `"${issue.priority}"`,
+                    `"${tagsStr.replace(/"/g, '""')}"`,
+                    `"${link}"`
+                ].join(",");
+            });
+
+            const csvContent = "\uFEFF" +[headers.join(","), ...rows].join("\n");
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            
+            const linkEl = document.createElement("a");
+            linkEl.setAttribute("href", url);
+            linkEl.setAttribute("download", `BCF_Topics_Export.csv`);
+            document.body.appendChild(linkEl);
+            linkEl.click();
+            document.body.removeChild(linkEl);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
