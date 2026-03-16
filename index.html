@@ -54,7 +54,7 @@
         .tag-badge { display: inline-block; padding: 3px 6px; background-color: #e5e7eb; color: #4b5563; border-radius: 4px; font-size: 11px; margin: 2px; }
         
         /* Deep Link Styling */
-        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
+        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
         .issue-link:hover { text-decoration: underline; color: #2563eb; }
         .link-icon { font-size: 12px; }
 
@@ -118,27 +118,28 @@
     <script>
         // ==========================================
         // 🟢 MANUAL USER GROUP MAPPING 🟢
-        // Because Trimble Connect actively blocks the Dashboard from reading 
-        // the User Groups (CORS security), type the user's groups here.
-        // If a user is not in this list, the chart will fall back to their name.
         // ==========================================
         const MANUAL_GROUP_OVERRIDES = {
-            "arild.pedersen": "Vei",
-            "asbjorn.gjerding-smith": "Vei",
+            "arild.pedersen": "Konstruksjon",
+            "asbjorn.gjerding-smith": "Konstruksjon",
             "eivind.randen": "Bane",
-            "fredrik.munch.starheim": "Bane",
+            "fredrik.munch.starheim": "Vei",
             "henrik.lien": "BIM",
-            "ida.frojmark": "Bane",
-            "ingvild.odegard.rosbach": "Bane",
-            "jens.beckstrom": "Vei",
+            "ida.frojmark": "Landskap",
+            "ingvild.odegard.rosbach": "Vei",
+            "jens.beckstrom": "Landskap",
             "jon.havard.lien": "Vann og Avløp",
             "jonas.ronglan.lindgard": "Geoteknikk",
-            "knut.johan.nygard": "Vei",
-            "kristoffer.bjornoy.weaver": "Geoteknikk",
+            "knut.johan.nygard": "Bane",
+            "kristoffer.bjornoy.weaver": "Bane",
             "magnus.norgren": "BIM",
             "oivind.skullerud": "Vei",
             "siv.hansen.dawes": "Konstruksjon"
-            // Example: "username": "Your Group Name"
+            "hilda.ofsthus": "Landskap"
+            "kaia.kristine.giltun": "Arkitekt"
+            "kristine.hove.rosok": "Vei"
+            "henning.thauland": "Bane"
+            "ivonne.verstappen": "Akustikk"
         };
 
         const BCF_ENDPOINTS =[
@@ -149,7 +150,7 @@
         ];
 
         let API = null, accessToken = null, currentProjectId = null;
-        let isFetching = false; // Lock to prevent double-execution
+        let isFetching = false; 
         
         let rawData = [];
         let currentFilteredData =[]; 
@@ -157,8 +158,8 @@
         let statusChart = null, priorityChart = null, assigneeChart = null;
         let allAssignees =[], allStatuses =[], allPriorities =[], allTags =[];
         
-        // This holds Trimble's API groups (if it doesn't fail) + our Manual overrides
         let userToGroupMap = { ...MANUAL_GROUP_OVERRIDES }; 
+        let activeChartGroup = 'All'; // Track clicks on the Workload Bar Chart
 
         const colorPalette = {
             'New': '#3b82f6', 'Open': '#3b82f6', 'Active': '#3b82f6',
@@ -215,7 +216,6 @@
             if (typeof payload === "string") accessToken = payload;
             else if (typeof payload === "object" && payload.accessToken) accessToken = payload.accessToken;
             
-            // Prevent the infinite loading loop by ensuring we only run fetch once
             if (accessToken && !isFetching) {
                 isFetching = true;
                 fetchDataWithSmartFallback();
@@ -250,10 +250,7 @@
                 return;
             }
             
-            // Attempt to fetch Trimble Groups, but apply a strict 2-second timeout 
-            // so it never gets stuck in an infinite loop!
             await fetchProjectGroupsNative(); 
-            
             processDataSafely(fetchedArray);
         }
 
@@ -263,7 +260,6 @@
         async function fetchProjectGroupsNative() {
             setLoaderText("Henter brukergrupper (Dette tar opptil 2 sekunder)...");
             try {
-                // If Trimble Connect's API hangs and ignores us, Promise.race forces it to give up after 2000ms
                 const members = await Promise.race([
                     API.project.getMembers(),
                     new Promise((resolve) => setTimeout(() => resolve(null), 2000))
@@ -274,13 +270,11 @@
                         let gName = null;
                         const grps = u.groups || u.userGroups ||[];
                         
-                        // Ignore "Norconsult"
                         const validGrps = grps.map(g => (typeof g === 'object' ? (g.name || g.groupName) : g))
                                               .filter(n => n && typeof n === 'string' && n.toLowerCase() !== 'norconsult');
                         
                         if (validGrps.length > 0) gName = validGrps.join(' & ');
 
-                        // Save mapping
                         if (gName) {
                             const mapKey = (k) => { if (k) userToGroupMap[String(k).toLowerCase().trim()] = gName; };
                             mapKey(u.email);
@@ -288,12 +282,8 @@
                             mapKey(u.name);
                         }
                     });
-                } else {
-                    console.warn("Trimble Group API blokkert eller utilgjengelig. Bruker Manuell Mapping (MANUAL_GROUP_OVERRIDES).");
                 }
-            } catch(e) {
-                console.warn("Feilet å hente grupper, faller tilbake på manuell overstyring.");
-            }
+            } catch(e) {}
         }
 
         // ==========================================
@@ -309,16 +299,13 @@
                 let lookupEmail = rawAssignee.toLowerCase().trim();
                 let lookupPrefix = lookupEmail.includes('@') ? lookupEmail.split('@')[0] : lookupEmail;
 
-                // Format display name for Table (e.g. henrik.lien)
                 if (assigneeName.includes('@')) {
                     assigneeName = assigneeName.split('@')[0];
                 }
 
-                // Determine Display Group exclusively for the Bar Chart
-                let displayGroup = assigneeName; // Defaults to their individual name
+                let displayGroup = assigneeName; 
                 
                 if (rawAssignee) {
-                    // Check our robust mapping (Manual Overrides + API)
                     if (userToGroupMap[lookupPrefix]) {
                         displayGroup = userToGroupMap[lookupPrefix];
                     } else if (userToGroupMap[lookupEmail]) {
@@ -330,8 +317,8 @@
                 return {
                     id: topic.title || topic.topic_title || guid || 'Uten tittel',
                     guid: guid,
-                    assignee: assigneeName,      // Used for Filter, Table, CSV
-                    displayGroup: displayGroup,  // Used for Bar Chart Grouping ONLY
+                    assignee: assigneeName,      
+                    displayGroup: displayGroup,  // Used for Bar Chart Grouping & Filtering
                     status: topic.topic_status || topic.status || 'Open',
                     priority: topic.priority || 'Normal',
                     tags: extractTags(topic)
@@ -398,15 +385,32 @@
                 options: {
                     responsive: true, maintainAspectRatio: false,
                     scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } },
-                    plugins: { tooltip: { mode: 'index', intersect: false } }
+                    plugins: { tooltip: { mode: 'index', intersect: false } },
+                    // NEW: Intercept clicks on the User Group Bar Chart to filter data dynamically!
+                    onClick: (event, elements, chart) => {
+                        if (elements.length > 0) {
+                            const clickedGroup = chart.data.labels[elements[0].index];
+                            activeChartGroup = (activeChartGroup === clickedGroup) ? 'All' : clickedGroup;
+                            applyFilters();
+                        }
+                    },
+                    onHover: handleChartHover
                 }
             });
         }
 
-        function resetFilters() {['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All'); applyFilters(); }
+        function resetFilters() {['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All'); 
+            activeChartGroup = 'All'; // Clear Bar Chart Filter
+            applyFilters(); 
+        }
 
         function applyFilters() {
-            const filters = { assignee: document.getElementById('assigneeFilter').value, status: document.getElementById('statusFilter').value, priority: document.getElementById('priorityFilter').value, tag: document.getElementById('tagFilter').value };
+            const filters = { 
+                assignee: document.getElementById('assigneeFilter').value, 
+                status: document.getElementById('statusFilter').value, 
+                priority: document.getElementById('priorityFilter').value, 
+                tag: document.getElementById('tagFilter').value 
+            };
 
             Object.keys(filters).forEach(key => {
                 const el = document.getElementById(key + 'Filter');
@@ -418,7 +422,8 @@
                 return (filters.assignee === 'All' || issue.assignee === filters.assignee) &&
                        (filters.status === 'All' || issue.status === filters.status) &&
                        (filters.priority === 'All' || issue.priority === filters.priority) &&
-                       (filters.tag === 'All' || issue.tags.includes(filters.tag));
+                       (filters.tag === 'All' || issue.tags.includes(filters.tag)) &&
+                       (activeChartGroup === 'All' || issue.displayGroup === activeChartGroup); // Apply Group filter
             });
 
             updateCharts(currentFilteredData);
@@ -428,8 +433,8 @@
         function updateCharts(data) {
             let statusCounts = {}, priorityCounts = {}, groupCounts = {};
             
-            // Bar Chart uses 'displayGroup'
-            let activeGroups = [...new Set(data.map(i => i.displayGroup))].sort();
+            // Bar Chart Uses User Groups
+            let activeGroups =[...new Set(data.map(i => i.displayGroup))].sort();
 
             allStatuses.forEach(s => statusCounts[s] = 0);
             allPriorities.forEach(p => priorityCounts[p] = 0);
@@ -468,6 +473,7 @@
             data.forEach(issue => {
                 const tr = document.createElement('tr');
                 const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
+                
                 const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
 
                 tr.innerHTML = `
