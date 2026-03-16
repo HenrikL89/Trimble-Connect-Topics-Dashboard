@@ -55,7 +55,7 @@
         .tag-badge { display: inline-block; padding: 3px 6px; background-color: #e5e7eb; color: #4b5563; border-radius: 4px; font-size: 11px; margin: 2px; }
         
         /* Deep Link Styling */
-        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
+        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
         .issue-link:hover { text-decoration: underline; color: #2563eb; }
         .link-icon { font-size: 12px; }
 
@@ -125,7 +125,7 @@
         let API = null, accessToken = null, currentProjectId = null;
         let activeEndpoint = "https://open21.connect.trimble.com"; 
         
-        let rawData =[];
+        let rawData = [];
         let currentFilteredData =[]; 
         
         let statusChart = null, priorityChart = null, assigneeChart = null;
@@ -196,7 +196,7 @@
         }
 
         // ==========================================
-        // 2. SMART FETCH DATA 
+        // 2. SMART FETCH BCF DATA 
         // ==========================================
         async function fetchDataWithSmartFallback() {
             setLoaderText("Henter BCF Topics fra server...");
@@ -204,6 +204,7 @@
 
             for (const base of BCF_ENDPOINTS) {
                 try {
+                    setLoaderText(`Prøver BCF endpoint: ${base}...`);
                     const url = `${base}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics`;
                     const resp = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" } });
 
@@ -221,78 +222,44 @@
 
             if (fetchedArray === null) return logError("Klarte ikke å hente topics fra noen kjente BCF servere.");
             
-            // FETCH GROUPS
-            await fetchProjectGroups(); 
+            await fetchProjectGroupsNative(); 
             processDataSafely(fetchedArray);
         }
 
         // ==========================================
-        // 3. BULLETPROOF FETCH PROJECT GROUPS
+        // 3. SECURE FETCH PROJECT GROUPS (Workspace API)
         // ==========================================
-        async function fetchProjectGroups() {
-            setLoaderText("Henter prosjektets brukergrupper...");
-            
-            let primaryCore = "https://app.connect.trimble.com";
-            if (activeEndpoint.includes("open21") || activeEndpoint.includes("app21")) primaryCore = "https://app21.connect.trimble.com";
-            else if (activeEndpoint.includes("eu.")) primaryCore = "https://europe.connect.trimble.com";
-            else if (activeEndpoint.includes("asia.")) primaryCore = "https://asia.connect.trimble.com";
-
-            const TC_API_ENDPOINTS =[
-                primaryCore,
-                "https://app21.connect.trimble.com",
-                "https://europe.connect.trimble.com",
-                "https://app.connect.trimble.com"
-            ];
-            
-            for (const tcBase of TC_API_ENDPOINTS) {
-                try {
-                    let foundGroups = false;
-                    
-                    // Directly fetch from /groups to guarantee member lists
-                    const urlGroups = `${tcBase}/tc/api/2.0/projects/${encodeURIComponent(currentProjectId)}/groups`;
-                    const respGroups = await fetch(urlGroups, {
-                        method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" }
-                    });
-
-                    if (respGroups.ok) {
-                        const groups = await respGroups.json();
+        async function fetchProjectGroupsNative() {
+            setLoaderText("Henter prosjektets brukergrupper (Workspace API)...");
+            try {
+                // By requesting members natively through the Workspace API, we bypass CORS entirely!
+                const members = await API.project.getMembers();
+                
+                if (members && Array.isArray(members)) {
+                    members.forEach(u => {
+                        const grps = u.groups || u.userGroups ||[];
                         
-                        groups.forEach(g => {
-                            const gName = g.name || g.groupName;
+                        if (grps.length > 0) {
+                            // Extract group names, exclude Norconsult
+                            const validGrps = grps.map(g => (typeof g === 'object' ? (g.name || g.groupName) : g))
+                                                  .filter(n => n && typeof n === 'string' && n.toLowerCase() !== 'norconsult');
                             
-                            // Completely ignore the Norconsult group as requested
-                            if (gName && gName.toLowerCase() !== 'norconsult' && Array.isArray(g.members)) {
+                            if (validGrps.length > 0) {
+                                const gName = validGrps.join(' & ');
+                                const mapKey = (k) => { if(k) userToGroupMap[String(k).toLowerCase().trim()] = gName; };
                                 
-                                g.members.forEach(m => {
-                                    if (m.email) {
-                                        const emailKey = m.email.toLowerCase().trim();
-                                        const prefixKey = emailKey.split('@')[0];
-                                        
-                                        // Allow users to be in multiple valid groups
-                                        if (userToGroupMap[emailKey]) {
-                                            if (!userToGroupMap[emailKey].includes(gName)) {
-                                                userToGroupMap[emailKey] += ` & ${gName}`;
-                                            }
-                                        } else {
-                                            userToGroupMap[emailKey] = gName;
-                                        }
-                                        
-                                        // Mirror the mapping to the prefix just in case
-                                        userToGroupMap[prefixKey] = userToGroupMap[emailKey];
-                                        foundGroups = true;
-                                    }
-                                });
+                                mapKey(u.email);
+                                if (u.email && u.email.includes('@')) mapKey(u.email.split('@')[0]);
+                                mapKey(`${u.firstName || ''} ${u.lastName || ''}`);
+                                mapKey(u.name);
+                                
+                                groupsSuccessfullyFetched = true;
                             }
-                        });
-                        
-                        if (foundGroups) {
-                            groupsSuccessfullyFetched = true;
-                            break;
                         }
-                    }
-                } catch(e) {
-                    console.warn(`Failed to fetch groups from ${tcBase}`, e);
+                    });
                 }
+            } catch(e) {
+                console.warn("Failed to fetch members via Workspace API:", e);
             }
         }
 
@@ -303,51 +270,42 @@
             setLoaderText("Prosesserer og bygger dashboard...");
             
             rawData = bcfArray.map(topic => {
-                let rawAssignee = topic.assigned_to || ''; // Could be 'henrik.lien' or 'henrik.lien@norconsult.com'
+                let rawAssignee = topic.assigned_to || '';
                 let assigneeName = rawAssignee || 'Ikke tildelt';
-                
-                // Guarantee an email format for lookup
-                let lookupEmail = rawAssignee.toLowerCase().trim();
-                if (lookupEmail && !lookupEmail.includes('@')) {
-                    lookupEmail = lookupEmail + '@norconsult.com';
-                }
-                let lookupPrefix = lookupEmail.split('@')[0];
+                let lookupKey = rawAssignee.toLowerCase().trim();
 
-                // For table/filter display, only keep the prefix
                 if (assigneeName.includes('@')) {
                     assigneeName = assigneeName.split('@')[0];
                 }
 
-                // Determine the Group via the Smart Mapping
+                // Determine the Display Group specifically for the Bar Chart
                 let displayGroup = assigneeName; 
-                
-                if (groupsSuccessfullyFetched && rawAssignee) {
-                    if (userToGroupMap[lookupEmail]) {
-                        displayGroup = userToGroupMap[lookupEmail];
-                    } else if (userToGroupMap[lookupPrefix]) {
-                        displayGroup = userToGroupMap[lookupPrefix];
+                if (groupsSuccessfullyFetched) {
+                    if (!rawAssignee) {
+                        displayGroup = 'Ikke tildelt';
+                    } else if (userToGroupMap[lookupKey]) {
+                        displayGroup = userToGroupMap[lookupKey];
+                    } else if (userToGroupMap[assigneeName.toLowerCase().trim()]) {
+                        displayGroup = userToGroupMap[assigneeName.toLowerCase().trim()];
                     } else {
-                        // If they aren't in any group (or were only in Norconsult)
-                        displayGroup = "Uten gruppe"; 
+                        displayGroup = 'Uten gruppe';
                     }
-                } else if (!rawAssignee) {
-                    displayGroup = "Ikke tildelt";
                 }
 
                 const guid = topic.guid || topic.topic_guid || topic.id || '';
                 return {
                     id: topic.title || topic.topic_title || guid || 'Uten tittel',
                     guid: guid,
-                    assignee: assigneeName,      // Used for Table, CSV, and Filter
-                    displayGroup: displayGroup,  // Used exclusively for the Bar Chart
+                    assignee: assigneeName, // Kept individual for the Filter/Table/CSV
+                    displayGroup: displayGroup, // Exclusively used to stack the Bar Chart
                     status: topic.topic_status || topic.status || 'Open',
                     priority: topic.priority || 'Normal',
                     tags: extractTags(topic)
                 };
             });
 
-            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort() || [];
-            allStatuses =[...new Set(rawData.map(i => i.status))].sort() || [];
+            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort() ||[];
+            allStatuses =[...new Set(rawData.map(i => i.status))].sort() ||[];
             allPriorities =[...new Set(rawData.map(i => i.priority))].sort() || [];
             allTags =[...new Set(rawData.flatMap(i => i.tags))].sort() ||[];
 
@@ -400,6 +358,7 @@
                 options: chartOptions('priorityFilter')
             });
 
+            // Initialize Bar Chart
             const datasets = allStatuses.map(status => ({ label: status, data:[], backgroundColor: getColor(status) }));
             assigneeChart = new Chart(document.getElementById('assigneeChart').getContext('2d'), {
                 type: 'bar', data: { labels:[], datasets: datasets },
@@ -407,7 +366,6 @@
                     responsive: true, maintainAspectRatio: false,
                     scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } },
                     plugins: { tooltip: { mode: 'index', intersect: false } }
-                    // No onClick here because it maps to Groups, while the dropdown filters by Username
                 }
             });
         }
@@ -442,8 +400,6 @@
 
             allStatuses.forEach(s => statusCounts[s] = 0);
             allPriorities.forEach(p => priorityCounts[p] = 0);
-            
-            // Setup count buckets for active groups only
             activeGroups.forEach(g => { groupCounts[g] = {}; allStatuses.forEach(s => groupCounts[g][s] = 0); });
 
             data.forEach(issue => {
@@ -457,7 +413,7 @@
             statusChart.data.datasets[0].data = allStatuses.map(s => statusCounts[s]); statusChart.update();
             priorityChart.data.datasets[0].data = allPriorities.map(p => priorityCounts[p]); priorityChart.update();
 
-            // Update Bar Chart labels to only show Groups that currently have > 0 workload
+            // Update Assignee Chart to group by User Group dynamically
             assigneeChart.data.labels = activeGroups;
             allStatuses.forEach((status, index) => { 
                 if(assigneeChart.data.datasets[index]) {
@@ -481,6 +437,7 @@
                 const tr = document.createElement('tr');
                 const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
                 
+                // Pure Topic ID link - Guarantees the Topics Panel opens correctly!
                 const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
 
                 tr.innerHTML = `
@@ -508,6 +465,7 @@
                 return;
             }
 
+            // Expose the User Group in the CSV as well
             const headers =["Title / ID", "Assignee", "User Group", "Status", "Priority", "Tags", "Trimble 3D Link"];
             
             const rows = currentFilteredData.map(issue => {
@@ -525,7 +483,7 @@
                 ].join(",");
             });
 
-            const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\n");
+            const csvContent = "\uFEFF" +[headers.join(","), ...rows].join("\n");
             
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
