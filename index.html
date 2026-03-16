@@ -96,7 +96,10 @@
         <div class="dashboard">
             <div class="card"><div class="card-title">Status Distribution</div><div class="chart-container"><canvas id="statusChart"></canvas></div></div>
             <div class="card"><div class="card-title">Priority Levels</div><div class="chart-container"><canvas id="priorityChart"></canvas></div></div>
-            <div class="card full-width"><div class="card-title">Workload by User Group</div><div class="chart-container" style="height: 350px;"><canvas id="assigneeChart"></canvas></div></div>
+            
+            <!-- We will aggregate the data by User Group for this specific chart -->
+            <div class="card full-width"><div class="card-title">Workload by Assignee / Group</div><div class="chart-container" style="height: 350px;"><canvas id="assigneeChart"></canvas></div></div>
+            
             <div class="card full-width">
                 <div class="card-title">Matching Issues (<span id="issueCount">0</span>)</div>
                 <div class="table-container">
@@ -129,7 +132,7 @@
         let currentFilteredData =[]; 
         
         let statusChart = null, priorityChart = null, assigneeChart = null;
-        let allAssignees =[], allStatuses =[], allPriorities =[], allTags =[];
+        let allAssignees = [], allStatuses = [], allPriorities =[], allTags =[];
         
         let userToGroupMap = {};
         let groupsSuccessfullyFetched = false;
@@ -204,7 +207,6 @@
 
             for (const base of BCF_ENDPOINTS) {
                 try {
-                    setLoaderText(`Prøver BCF endpoint: ${base}...`);
                     const url = `${base}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics`;
                     const resp = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" } });
 
@@ -222,17 +224,18 @@
 
             if (fetchedArray === null) return logError("Klarte ikke å hente topics fra noen kjente BCF servere.");
             
+            // FETCH GROUPS NATIVELY
             await fetchProjectGroupsNative(); 
             processDataSafely(fetchedArray);
         }
 
         // ==========================================
-        // 3. SECURE FETCH PROJECT GROUPS (Workspace API)
+        // 3. FETCH PROJECT GROUPS VIA WORKSPACE API (BYPASSES CORS!)
         // ==========================================
         async function fetchProjectGroupsNative() {
-            setLoaderText("Henter prosjektets brukergrupper (Workspace API)...");
+            setLoaderText("Henter prosjektets brukergrupper...");
             try {
-                // By requesting members natively through the Workspace API, we bypass CORS entirely!
+                // By using API.project.getMembers(), we bypass all browser CORS restrictions
                 const members = await API.project.getMembers();
                 
                 if (members && Array.isArray(members)) {
@@ -240,23 +243,23 @@
                         const grps = u.groups || u.userGroups ||[];
                         
                         if (grps.length > 0) {
-                            // Extract group names, exclude Norconsult
-                            const validGrps = grps.map(g => (typeof g === 'object' ? (g.name || g.groupName) : g))
-                                                  .filter(n => n && typeof n === 'string' && n.toLowerCase() !== 'norconsult');
+                            // Extract group names, strictly EXCLUDE "Norconsult"
+                            const validGrps = grps
+                                .map(g => (typeof g === 'object' ? (g.name || g.groupName) : g))
+                                .filter(n => n && typeof n === 'string' && n.toLowerCase() !== 'norconsult');
                             
                             if (validGrps.length > 0) {
                                 const gName = validGrps.join(' & ');
-                                const mapKey = (k) => { if(k) userToGroupMap[String(k).toLowerCase().trim()] = gName; };
+                                const mapKey = (k) => { if (k) userToGroupMap[String(k).toLowerCase().trim()] = gName; };
                                 
                                 mapKey(u.email);
                                 if (u.email && u.email.includes('@')) mapKey(u.email.split('@')[0]);
                                 mapKey(`${u.firstName || ''} ${u.lastName || ''}`);
-                                mapKey(u.name);
-                                
-                                groupsSuccessfullyFetched = true;
+                                if (u.name) mapKey(u.name);
                             }
                         }
                     });
+                    groupsSuccessfullyFetched = true;
                 }
             } catch(e) {
                 console.warn("Failed to fetch members via Workspace API:", e);
@@ -272,42 +275,49 @@
             rawData = bcfArray.map(topic => {
                 let rawAssignee = topic.assigned_to || '';
                 let assigneeName = rawAssignee || 'Ikke tildelt';
-                let lookupKey = rawAssignee.toLowerCase().trim();
+                let lookupEmail = rawAssignee.toLowerCase().trim();
 
+                // Enforce @norconsult.com behind the scenes if they only provided a username
+                if (lookupEmail && !lookupEmail.includes('@') && lookupEmail !== 'ikke tildelt') {
+                    lookupEmail = lookupEmail + '@norconsult.com';
+                }
+                
+                let lookupPrefix = lookupEmail.includes('@') ? lookupEmail.split('@')[0] : lookupEmail;
+
+                // Format the display name for the Table/Filters (strip domain)
                 if (assigneeName.includes('@')) {
                     assigneeName = assigneeName.split('@')[0];
                 }
 
-                // Determine the Display Group specifically for the Bar Chart
+                // Determine the Display Group exclusively for the Bar Chart
                 let displayGroup = assigneeName; 
-                if (groupsSuccessfullyFetched) {
-                    if (!rawAssignee) {
-                        displayGroup = 'Ikke tildelt';
-                    } else if (userToGroupMap[lookupKey]) {
-                        displayGroup = userToGroupMap[lookupKey];
-                    } else if (userToGroupMap[assigneeName.toLowerCase().trim()]) {
-                        displayGroup = userToGroupMap[assigneeName.toLowerCase().trim()];
-                    } else {
-                        displayGroup = 'Uten gruppe';
+                if (groupsSuccessfullyFetched && rawAssignee) {
+                    if (userToGroupMap[lookupEmail]) {
+                        displayGroup = userToGroupMap[lookupEmail];
+                    } else if (userToGroupMap[lookupPrefix]) {
+                        displayGroup = userToGroupMap[lookupPrefix];
                     }
+                    // Note: If they aren't in any group, OR if their only group was "Norconsult",
+                    // it defaults back to keeping their individual assigneeName (e.g. henrik.lien).
                 }
 
                 const guid = topic.guid || topic.topic_guid || topic.id || '';
                 return {
                     id: topic.title || topic.topic_title || guid || 'Uten tittel',
                     guid: guid,
-                    assignee: assigneeName, // Kept individual for the Filter/Table/CSV
-                    displayGroup: displayGroup, // Exclusively used to stack the Bar Chart
+                    assignee: assigneeName,      // Kept individual for the Filter, Table, and CSV
+                    displayGroup: displayGroup,  // Used exclusively for stacking the Bar Chart
                     status: topic.topic_status || topic.status || 'Open',
                     priority: topic.priority || 'Normal',
                     tags: extractTags(topic)
                 };
             });
 
-            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort() ||[];
-            allStatuses =[...new Set(rawData.map(i => i.status))].sort() ||[];
-            allPriorities =[...new Set(rawData.map(i => i.priority))].sort() || [];
-            allTags =[...new Set(rawData.flatMap(i => i.tags))].sort() ||[];
+            // Populate Dropdowns
+            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort();
+            allStatuses =[...new Set(rawData.map(i => i.status))].sort();
+            allPriorities =[...new Set(rawData.map(i => i.priority))].sort();
+            allTags =[...new Set(rawData.flatMap(i => i.tags))].sort();
 
             populateSelect('assigneeFilter', allAssignees);
             populateSelect('statusFilter', allStatuses);
@@ -358,7 +368,7 @@
                 options: chartOptions('priorityFilter')
             });
 
-            // Initialize Bar Chart
+            // Initialize Group Chart
             const datasets = allStatuses.map(status => ({ label: status, data:[], backgroundColor: getColor(status) }));
             assigneeChart = new Chart(document.getElementById('assigneeChart').getContext('2d'), {
                 type: 'bar', data: { labels:[], datasets: datasets },
@@ -366,14 +376,22 @@
                     responsive: true, maintainAspectRatio: false,
                     scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } },
                     plugins: { tooltip: { mode: 'index', intersect: false } }
+                    // No onClick here since this chart maps to displayGroup, not individual assignees.
                 }
             });
         }
 
-        function resetFilters() {['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All'); applyFilters(); }
+        function resetFilters() {['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All'); 
+            applyFilters(); 
+        }
 
         function applyFilters() {
-            const filters = { assignee: document.getElementById('assigneeFilter').value, status: document.getElementById('statusFilter').value, priority: document.getElementById('priorityFilter').value, tag: document.getElementById('tagFilter').value };
+            const filters = { 
+                assignee: document.getElementById('assigneeFilter').value, 
+                status: document.getElementById('statusFilter').value, 
+                priority: document.getElementById('priorityFilter').value, 
+                tag: document.getElementById('tagFilter').value 
+            };
 
             Object.keys(filters).forEach(key => {
                 const el = document.getElementById(key + 'Filter');
@@ -395,8 +413,8 @@
         function updateCharts(data) {
             let statusCounts = {}, priorityCounts = {}, groupCounts = {};
             
-            // Extract ONLY the User Groups that are present in the active filtered data
-            let activeGroups =[...new Set(data.map(i => i.displayGroup))].sort();
+            // Bar Chart uses 'displayGroup'
+            let activeGroups = [...new Set(data.map(i => i.displayGroup))].sort();
 
             allStatuses.forEach(s => statusCounts[s] = 0);
             allPriorities.forEach(p => priorityCounts[p] = 0);
@@ -413,7 +431,7 @@
             statusChart.data.datasets[0].data = allStatuses.map(s => statusCounts[s]); statusChart.update();
             priorityChart.data.datasets[0].data = allPriorities.map(p => priorityCounts[p]); priorityChart.update();
 
-            // Update Assignee Chart to group by User Group dynamically
+            // Update Assignee Chart to group dynamically
             assigneeChart.data.labels = activeGroups;
             allStatuses.forEach((status, index) => { 
                 if(assigneeChart.data.datasets[index]) {
@@ -437,7 +455,6 @@
                 const tr = document.createElement('tr');
                 const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
                 
-                // Pure Topic ID link - Guarantees the Topics Panel opens correctly!
                 const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
 
                 tr.innerHTML = `
@@ -465,8 +482,7 @@
                 return;
             }
 
-            // Expose the User Group in the CSV as well
-            const headers =["Title / ID", "Assignee", "User Group", "Status", "Priority", "Tags", "Trimble 3D Link"];
+            const headers =["Title / ID", "Assignee", "Status", "Priority", "Tags", "Trimble 3D Link"];
             
             const rows = currentFilteredData.map(issue => {
                 const tagsStr = issue.tags.join(" | ");
@@ -475,7 +491,6 @@
                 return[
                     `"${issue.id.replace(/"/g, '""')}"`,
                     `"${issue.assignee.replace(/"/g, '""')}"`,
-                    `"${issue.displayGroup.replace(/"/g, '""')}"`,
                     `"${issue.status}"`,
                     `"${issue.priority}"`,
                     `"${tagsStr.replace(/"/g, '""')}"`,
