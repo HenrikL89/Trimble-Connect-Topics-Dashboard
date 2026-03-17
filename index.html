@@ -26,7 +26,7 @@
         }
         .spinner { border: 4px solid #f3f4f6; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        #error-log { color: #ef4444; font-size: 14px; margin-top: 10px; max-width: 600px; word-wrap: break-word; }
+        #error-log { color: #ef4444; font-size: 14px; margin-top: 10px; max-width: 600px; word-wrap: break-word; font-weight: bold; }
 
         .filter-panel { background: #ffffff; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-end; }
         .filter-group { display: flex; flex-direction: column; flex: 1; min-width: 160px; }
@@ -43,7 +43,8 @@
 
         .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; flex: 1; }
         .card { background: #ffffff; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); padding: 20px; }
-        .card-title { font-size: 16px; font-weight: 600; margin-bottom: 15px; color: #374151; border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; }
+        .card-title { font-size: 16px; font-weight: 600; margin-bottom: 15px; color: #374151; border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .active-filter-badge { background-color: #3b82f6; color: white; font-size: 11px; padding: 3px 8px; border-radius: 10px; display: none; }
         .full-width { grid-column: span 2; }
         .chart-container { position: relative; height: 300px; width: 100%; }
 
@@ -55,7 +56,7 @@
         .tag-badge { display: inline-block; padding: 3px 6px; background-color: #e5e7eb; color: #4b5563; border-radius: 4px; font-size: 11px; margin: 2px; }
         
         /* Deep Link Styling */
-        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
+        .issue-link { color: #3b82f6; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
         .issue-link:hover { text-decoration: underline; color: #2563eb; }
         .link-icon { font-size: 12px; }
 
@@ -83,7 +84,7 @@
 
         <!-- Filter Controls -->
         <div class="filter-panel">
-            <div class="filter-group"><label>Assignee</label><select id="assigneeFilter" onchange="applyFilters()"><option value="All">All Assignees</option></select></div>
+            <div class="filter-group"><label>Assignee (Name)</label><select id="assigneeFilter" onchange="applyFilters()"><option value="All">All Assignees</option></select></div>
             <div class="filter-group"><label>Status</label><select id="statusFilter" onchange="applyFilters()"><option value="All">All Statuses</option></select></div>
             <div class="filter-group"><label>Priority</label><select id="priorityFilter" onchange="applyFilters()"><option value="All">All Priorities</option></select></div>
             <div class="filter-group"><label>Tags / Fag</label><select id="tagFilter" onchange="applyFilters()"><option value="All">All Tags</option></select></div>
@@ -96,7 +97,15 @@
         <div class="dashboard">
             <div class="card"><div class="card-title">Status Distribution</div><div class="chart-container"><canvas id="statusChart"></canvas></div></div>
             <div class="card"><div class="card-title">Priority Levels</div><div class="chart-container"><canvas id="priorityChart"></canvas></div></div>
-            <div class="card full-width"><div class="card-title">Workload by Assignee</div><div class="chart-container" style="height: 350px;"><canvas id="assigneeChart"></canvas></div></div>
+            
+            <div class="card full-width">
+                <div class="card-title">
+                    <span>Workload by User Group</span>
+                    <span id="chart-filter-badge" class="active-filter-badge">Filter Active</span>
+                </div>
+                <div class="chart-container" style="height: 350px;"><canvas id="groupChart"></canvas></div>
+            </div>
+            
             <div class="card full-width">
                 <div class="card-title">Matching Issues (<span id="issueCount">0</span>)</div>
                 <div class="table-container">
@@ -123,12 +132,16 @@
         ];
 
         let API = null, accessToken = null, currentProjectId = null;
+        let initialDataFetched = false; // The absolute lock to prevent infinite loading loops
         
         let rawData = [];
-        let currentFilteredData =[]; // Keeps track of active data for CSV Export
+        let currentFilteredData =[]; 
         
-        let statusChart = null, priorityChart = null, assigneeChart = null;
+        let statusChart = null, priorityChart = null, groupChart = null;
         let allAssignees =[], allStatuses =[], allPriorities =[], allTags =[];
+        
+        let userToGroupMap = {};
+        let activeChartGroup = 'All'; // Tracks clicks on the Bar Chart
 
         const colorPalette = {
             'New': '#3b82f6', 'Open': '#3b82f6', 'Active': '#3b82f6',
@@ -148,11 +161,14 @@
         }
 
         function setLoaderText(text) { document.getElementById('loader-text').innerText = text; }
-        function logError(msg) { console.error(msg); document.getElementById('error-log').innerText += msg + "\n"; document.getElementById('spinner').style.display = 'none'; }
         
-        function escapeHtml(str) {
-            return String(str || "").replace(/[&<>'"]/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[match]);
+        function logError(msg) { 
+            console.error(msg); 
+            document.getElementById('error-log').innerText = msg; 
+            document.getElementById('spinner').style.display = 'none'; 
         }
+        
+        function escapeHtml(str) { return String(str || "").replace(/[&<>'"]/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[match]); }
 
         function extractTags(topic) {
             const candidates =[];
@@ -165,13 +181,17 @@
         }
 
         // ==========================================
-        // 1. TRIMBLE CONNECT WORKSPACE API
+        // 1. INITIALIZE & AUTHENTICATE
         // ==========================================
         async function init() {
             setLoaderText("Kobler til Trimble Connect Workspace...");
             try {
                 API = await TrimbleConnectWorkspace.connect(window.parent, (event, args) => {
-                    if (event === "extension.accessToken" && args.data) handleAccessTokenPayload(args.data);
+                    // Trimble fires this event multiple times. We ONLY care about the first one!
+                    if (event === "extension.accessToken" && args.data && !initialDataFetched) {
+                        accessToken = typeof args.data === "string" ? args.data : args.data.accessToken;
+                        if (accessToken) startDataPipeline();
+                    }
                 });
 
                 const projectInfo = await API.project.getCurrentProject();
@@ -180,70 +200,145 @@
 
                 setLoaderText("Ber om tilgang (accessToken)...");
                 const permissionResult = await API.extension.requestPermission("accesstoken");
-                handleAccessTokenPayload(permissionResult);
-            } catch (err) { logError("Feil ved tilkobling til Trimble Workspace: " + (err.message || err)); }
-        }
+                
+                if (!initialDataFetched) {
+                    if (typeof permissionResult === "string" && permissionResult !== "pending" && permissionResult !== "denied") {
+                        accessToken = permissionResult;
+                        startDataPipeline();
+                    } else if (typeof permissionResult === "object" && permissionResult.accessToken) {
+                        accessToken = permissionResult.accessToken;
+                        startDataPipeline();
+                    }
+                }
 
-        function handleAccessTokenPayload(payload) {
-            if (!payload || payload === "pending" || payload === "denied") return;
-            if (typeof payload === "string") accessToken = payload;
-            else if (typeof payload === "object" && payload.accessToken) accessToken = payload.accessToken;
-            if (accessToken) fetchDataWithSmartFallback();
+                // Failsafe: If Trimble API completely hangs for 10 seconds, force an error message
+                setTimeout(() => {
+                    if (!initialDataFetched) logError("Tidsavbrudd: Fikk ikke svar fra Trimble Connect API. Oppdater siden og prøv igjen.");
+                }, 10000);
+
+            } catch (err) { logError("Feil ved tilkobling til Workspace: " + (err.message || err)); }
         }
 
         // ==========================================
-        // 2. SMART FETCH DATA 
+        // 2. LINEAR DATA PIPELINE (Prevents Loops)
         // ==========================================
-        async function fetchDataWithSmartFallback() {
+        async function startDataPipeline() {
+            if (initialDataFetched) return; // Absolutely ensures this only runs once
+            initialDataFetched = true; 
+
+            try {
+                await fetchProjectGroupsNative(); // Step 1: Get Groups natively
+                await fetchBCFTopics();           // Step 2: Get Topics
+            } catch (e) {
+                logError("Feil under henting av data: " + e.message);
+            }
+        }
+
+        // ==========================================
+        // 3. FETCH USER GROUPS (DYNAMIC & CORS-FREE)
+        // ==========================================
+        async function fetchProjectGroupsNative() {
+            setLoaderText("Henter prosjektets brukergrupper...");
+            try {
+                // Get members natively using Workspace API
+                const members = await API.project.getMembers();
+                
+                if (members && Array.isArray(members)) {
+                    members.forEach(u => {
+                        const grps = u.groups || u.userGroups ||[];
+                        
+                        // Ignore "Norconsult"
+                        const validGrps = grps.map(g => (typeof g === 'object' ? (g.name || g.groupName) : g))
+                                              .filter(n => n && typeof n === 'string' && n.toLowerCase() !== 'norconsult');
+                        
+                        if (validGrps.length > 0) {
+                            const gName = validGrps.join(' & ');
+                            
+                            // Map all permutations of their name to the group
+                            const mapKey = (k) => { if (k) userToGroupMap[String(k).toLowerCase().trim()] = gName; };
+                            
+                            mapKey(u.email);
+                            if (u.email && u.email.includes('@')) mapKey(u.email.split('@')[0]);
+                            mapKey(`${u.firstName || ''} ${u.lastName || ''}`);
+                            if (u.name) mapKey(u.name);
+                        }
+                    });
+                }
+            } catch(e) {
+                console.warn("Kunne ikke hente grupper, ignorerer...", e);
+            }
+        }
+
+        // ==========================================
+        // 4. FETCH BCF TOPICS
+        // ==========================================
+        async function fetchBCFTopics() {
             setLoaderText("Henter BCF Topics fra server...");
             let fetchedArray = null;
 
             for (const base of BCF_ENDPOINTS) {
                 try {
-                    setLoaderText(`Prøver BCF endpoint: ${base}...`);
                     const url = `${base}/bcf/3.0/projects/${encodeURIComponent(currentProjectId)}/topics`;
                     const resp = await fetch(url, { method: "GET", headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" } });
 
                     if (resp.ok) {
                         const json = await resp.json();
-                        if (Array.isArray(json)) fetchedArray = json;
-                        else if (json && Array.isArray(json.topics)) fetchedArray = json.topics;
-                        else if (json && Array.isArray(json.value)) fetchedArray = json.value;
-                        else fetchedArray =[]; 
+                        fetchedArray = Array.isArray(json) ? json : (json.topics || json.value ||[]);
                         break; 
                     }
-                } catch (err) { console.warn(`Endpoint feilet: ${base}`, err); }
+                } catch (err) {}
             }
 
-            if (fetchedArray === null) return logError("Klarte ikke å hente topics fra noen kjente BCF servere.");
+            if (!fetchedArray) throw new Error("Klarte ikke å hente topics fra BCF servere.");
+            
             processDataSafely(fetchedArray);
         }
 
         // ==========================================
-        // 3. SAFE DATA PARSING & DASHBOARD INIT
+        // 5. SAFE DATA PARSING & DASHBOARD INIT
         // ==========================================
         function processDataSafely(bcfArray) {
             setLoaderText("Prosesserer og bygger dashboard...");
             
             rawData = bcfArray.map(topic => {
-                let assigneeName = topic.assigned_to || 'Ikke tildelt';
-                if (assigneeName.includes('@')) assigneeName = assigneeName.split('@')[0];
+                let rawAssignee = topic.assigned_to || '';
+                let assigneeName = rawAssignee || 'Ikke tildelt';
+                
+                let lookupEmail = rawAssignee.toLowerCase().trim();
+                let lookupPrefix = lookupEmail.includes('@') ? lookupEmail.split('@')[0] : lookupEmail;
+
+                // Display formatting for individual username
+                if (assigneeName.includes('@')) {
+                    assigneeName = assigneeName.split('@')[0];
+                }
+
+                // Display formatting for Group (Bar Chart)
+                let displayGroup = assigneeName; 
+                if (rawAssignee) {
+                    if (userToGroupMap[lookupEmail]) displayGroup = userToGroupMap[lookupEmail];
+                    else if (userToGroupMap[lookupPrefix]) displayGroup = userToGroupMap[lookupPrefix];
+                    else displayGroup = 'Uten gruppe';
+                } else {
+                    displayGroup = 'Ikke tildelt';
+                }
 
                 const guid = topic.guid || topic.topic_guid || topic.id || '';
                 return {
                     id: topic.title || topic.topic_title || guid || 'Uten tittel',
                     guid: guid,
-                    assignee: assigneeName,
+                    assignee: assigneeName,      // Kept for Table & Filters
+                    displayGroup: displayGroup,  // Used for Bar Chart Grouping
                     status: topic.topic_status || topic.status || 'Open',
                     priority: topic.priority || 'Normal',
                     tags: extractTags(topic)
                 };
             });
 
-            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort() ||[];
-            allStatuses =[...new Set(rawData.map(i => i.status))].sort() ||[];
-            allPriorities =[...new Set(rawData.map(i => i.priority))].sort() ||[];
-            allTags =[...new Set(rawData.flatMap(i => i.tags))].sort() ||[];
+            // Populate Dropdowns with Individual Names
+            allAssignees =[...new Set(rawData.map(i => i.assignee))].sort();
+            allStatuses =[...new Set(rawData.map(i => i.status))].sort();
+            allPriorities =[...new Set(rawData.map(i => i.priority))].sort();
+            allTags =[...new Set(rawData.flatMap(i => i.tags))].sort();
 
             populateSelect('assigneeFilter', allAssignees);
             populateSelect('statusFilter', allStatuses);
@@ -269,7 +364,7 @@
         function initCharts() {
             if(statusChart) statusChart.destroy();
             if(priorityChart) priorityChart.destroy();
-            if(assigneeChart) assigneeChart.destroy();
+            if(groupChart) groupChart.destroy();
 
             const chartOptions = (filterId) => ({
                 responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } },
@@ -295,17 +390,17 @@
             });
 
             const datasets = allStatuses.map(status => ({ label: status, data:[], backgroundColor: getColor(status) }));
-            assigneeChart = new Chart(document.getElementById('assigneeChart').getContext('2d'), {
-                type: 'bar', data: { labels: allAssignees, datasets: datasets },
+            groupChart = new Chart(document.getElementById('groupChart').getContext('2d'), {
+                type: 'bar', data: { labels:[], datasets: datasets },
                 options: {
                     responsive: true, maintainAspectRatio: false,
                     scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } },
                     plugins: { tooltip: { mode: 'index', intersect: false } },
-                    onClick: (event, elements) => {
+                    onClick: (event, elements, chart) => {
+                        // When a User Group bar is clicked, toggle the filter!
                         if (elements.length > 0) {
-                            const label = assigneeChart.data.labels[elements[0].index];
-                            const select = document.getElementById('assigneeFilter');
-                            select.value = select.value === label ? 'All' : label;
+                            const clickedGroup = chart.data.labels[elements[0].index];
+                            activeChartGroup = (activeChartGroup === clickedGroup) ? 'All' : clickedGroup;
                             applyFilters();
                         }
                     },
@@ -314,10 +409,18 @@
             });
         }
 
-        function resetFilters() {['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All'); applyFilters(); }
+        function resetFilters() {['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All'); 
+            activeChartGroup = 'All'; // Reset Bar Chart filter
+            applyFilters(); 
+        }
 
         function applyFilters() {
-            const filters = { assignee: document.getElementById('assigneeFilter').value, status: document.getElementById('statusFilter').value, priority: document.getElementById('priorityFilter').value, tag: document.getElementById('tagFilter').value };
+            const filters = { 
+                assignee: document.getElementById('assigneeFilter').value, 
+                status: document.getElementById('statusFilter').value, 
+                priority: document.getElementById('priorityFilter').value, 
+                tag: document.getElementById('tagFilter').value 
+            };
 
             Object.keys(filters).forEach(key => {
                 const el = document.getElementById(key + 'Filter');
@@ -325,11 +428,16 @@
                 else { el.style.borderColor = '#d1d5db'; el.style.backgroundColor = '#f9fafb'; el.style.fontWeight = '400'; }
             });
 
+            // Show active badge if Bar Chart group filter is engaged
+            document.getElementById('chart-filter-badge').style.display = (activeChartGroup !== 'All') ? 'inline-block' : 'none';
+            if (activeChartGroup !== 'All') document.getElementById('chart-filter-badge').innerText = `Filter: ${activeChartGroup}`;
+
             currentFilteredData = rawData.filter(issue => {
                 return (filters.assignee === 'All' || issue.assignee === filters.assignee) &&
                        (filters.status === 'All' || issue.status === filters.status) &&
                        (filters.priority === 'All' || issue.priority === filters.priority) &&
-                       (filters.tag === 'All' || issue.tags.includes(filters.tag));
+                       (filters.tag === 'All' || issue.tags.includes(filters.tag)) &&
+                       (activeChartGroup === 'All' || issue.displayGroup === activeChartGroup); // Group Filter Applied!
             });
 
             updateCharts(currentFilteredData);
@@ -337,34 +445,32 @@
         }
 
         function updateCharts(data) {
-            let statusCounts = {}, priorityCounts = {}, assigneeCounts = {};
+            let statusCounts = {}, priorityCounts = {}, groupCounts = {};
             
-            // Extract ONLY the assignees that are present in the active filtered data
-            let activeAssignees =[...new Set(data.map(i => i.assignee))].sort();
+            let activeGroups =[...new Set(data.map(i => i.displayGroup))].sort();
 
             allStatuses.forEach(s => statusCounts[s] = 0);
             allPriorities.forEach(p => priorityCounts[p] = 0);
-            
-            // Setup count buckets for active assignees only
-            activeAssignees.forEach(a => { assigneeCounts[a] = {}; allStatuses.forEach(s => assigneeCounts[a][s] = 0); });
+            activeGroups.forEach(g => { groupCounts[g] = {}; allStatuses.forEach(s => groupCounts[g][s] = 0); });
 
             data.forEach(issue => {
                 if(statusCounts[issue.status] !== undefined) statusCounts[issue.status]++;
                 if(priorityCounts[issue.priority] !== undefined) priorityCounts[issue.priority]++;
-                if(assigneeCounts[issue.assignee] && assigneeCounts[issue.assignee][issue.status] !== undefined) assigneeCounts[issue.assignee][issue.status]++;
+                if(groupCounts[issue.displayGroup] && groupCounts[issue.displayGroup][issue.status] !== undefined) {
+                    groupCounts[issue.displayGroup][issue.status]++;
+                }
             });
 
             statusChart.data.datasets[0].data = allStatuses.map(s => statusCounts[s]); statusChart.update();
             priorityChart.data.datasets[0].data = allPriorities.map(p => priorityCounts[p]); priorityChart.update();
 
-            // Update Assignee Chart to hide empty names dynamically
-            assigneeChart.data.labels = activeAssignees;
+            groupChart.data.labels = activeGroups;
             allStatuses.forEach((status, index) => { 
-                if(assigneeChart.data.datasets[index]) {
-                    assigneeChart.data.datasets[index].data = activeAssignees.map(a => assigneeCounts[a][status]); 
+                if(groupChart.data.datasets[index]) {
+                    groupChart.data.datasets[index].data = activeGroups.map(g => groupCounts[g][status]); 
                 }
             });
-            assigneeChart.update();
+            groupChart.update();
         }
 
         function updateTable(data) {
@@ -385,7 +491,7 @@
 
                 tr.innerHTML = `
                     <td>
-                        <a href="${topic3dUrl}" target="_blank" class="issue-link" title="Åpne i 3D Viewer (Klikk på miniatyrbildet i Topics panelet for å laste modellene)">
+                        <a href="${topic3dUrl}" target="_blank" class="issue-link" title="Åpne i 3D Viewer">
                             ${escapeHtml(issue.id)}
                             <span class="link-icon">↗</span>
                         </a>
@@ -399,22 +505,13 @@
             });
         }
         
-        // ==========================================
-        // 4. CSV EXPORT FUNCTIONALITY
-        // ==========================================
         function exportCSV() {
-            if (currentFilteredData.length === 0) {
-                alert("Ingen data å eksportere.");
-                return;
-            }
+            if (currentFilteredData.length === 0) { alert("Ingen data å eksportere."); return; }
 
             const headers =["Title / ID", "Assignee", "Status", "Priority", "Tags", "Trimble 3D Link"];
-            
             const rows = currentFilteredData.map(issue => {
                 const tagsStr = issue.tags.join(" | ");
                 const link = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
-                
-                // Wrap in quotes and escape internal quotes to prevent CSV breaking
                 return[
                     `"${issue.id.replace(/"/g, '""')}"`,
                     `"${issue.assignee.replace(/"/g, '""')}"`,
@@ -425,9 +522,7 @@
                 ].join(",");
             });
 
-            // \uFEFF ensures Excel reads UTF-8 characters properly (æ, ø, å)
             const csvContent = "\uFEFF" +[headers.join(","), ...rows].join("\n");
-            
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             
