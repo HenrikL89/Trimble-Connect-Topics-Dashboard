@@ -83,7 +83,7 @@
         <p id="loader-text" style="color: #6b7280; font-size: 14px; margin-top: 8px;">Initialiserer Trimble Connect Workspace...</p>
     </div>
 
-    <div class="container" style="display: none;" id="main-content">
+    <div class="container" id="main-content" style="display: none;">
         <div class="header">
             <h1 id="project-title">Interactive Topics Dashboard</h1>
             <p>Live Trimble Connect BCF Data Integration</p>
@@ -298,10 +298,12 @@
                 let lookupEmail = rawAssignee.toLowerCase().trim();
                 let lookupPrefix = lookupEmail.includes('@') ? lookupEmail.split('@')[0] : lookupEmail;
 
+                // Format display name for Table (e.g. henrik.lien)
                 if (assigneeName.includes('@')) {
                     assigneeName = assigneeName.split('@')[0];
                 }
 
+                // Determine Display Group EXCLUSIVELY for the Bar Chart
                 let displayGroup = assigneeName; 
                 
                 if (rawAssignee) {
@@ -337,7 +339,7 @@
             populateSelect('tagFilter', allTags);
 
             document.getElementById('loader').style.display = 'none';
-            document.getElementById('main-content').style.display = 'flex';
+            document.getElementById('main-content').style.display = 'block';
 
             initCharts();
             applyFilters();
@@ -474,6 +476,7 @@
             data.forEach(issue => {
                 const tr = document.createElement('tr');
                 const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
+                
                 const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
 
                 tr.innerHTML = `
@@ -520,6 +523,9 @@
             document.body.removeChild(linkEl);
         }
 
+        // ==========================================
+        // SMART PDF EXPORT (Fixes Edge-Cropping Bug)
+        // ==========================================
         function exportPDF() {
             if (currentFilteredData.length === 0) { 
                 alert("Ingen data å eksportere."); 
@@ -536,52 +542,72 @@
             const actionBtns = document.getElementById('action-buttons');
 
             // Save original styles
+            const origMargin = element.style.margin;
             const origWidth = element.style.width;
             const origMaxWidth = element.style.maxWidth;
             const origMaxHeight = tableContainer.style.maxHeight;
             const origOverflow = tableContainer.style.overflow;
             const origDisplay = actionBtns.style.display;
 
-            // PREPARE FOR PDF CAPTURE: Force 1200px width, expand table, and hide buttons
+            // Scroll to the absolute top to avoid html2canvas clipping bugs
+            window.scrollTo(0, 0);
+
+            // PREPARE FOR PDF CAPTURE: 
+            // 1. Remove auto margin so the canvas anchors to the absolute left edge (fixes crop)
+            // 2. Lock width to exactly 1200px
+            element.style.margin = '0';
             element.style.width = '1200px';
             element.style.maxWidth = '1200px';
+            
+            // Expand the table and hide buttons
             tableContainer.style.maxHeight = 'none';
             tableContainer.style.overflow = 'visible';
             actionBtns.style.display = 'none'; 
 
-            const dateStr = new Date().toISOString().split('T')[0];
-            
-            const opt = {
-                margin:       [10, 10, 10, 10], // Top, Left, Bottom, Right
-                filename:     `BCF_Topics_Dashboard_${dateStr}.pdf`,
-                image:        { type: 'jpeg', quality: 0.98 },
-                // windowWidth forces html2canvas to render at exactly 1200px to match our container
-                html2canvas:  { scale: 2, useCORS: true, logging: false, windowWidth: 1200 },
-                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' },
-                // Avoid breaking inside cards or table rows
-                pagebreak:    { mode: ['css', 'legacy'], avoid: ['.card', 'tr'] } 
-            };
+            // Give the browser 300ms to repaint the expanded layout before taking the picture
+            setTimeout(() => {
+                const dateStr = new Date().toISOString().split('T')[0];
+                
+                const opt = {
+                    margin:       [10, 10, 10, 10], // Margins in mm
+                    filename:     `BCF_Topics_Dashboard_${dateStr}.pdf`,
+                    image:        { type: 'jpeg', quality: 1.0 },
+                    html2canvas:  { 
+                        scale: 2, 
+                        useCORS: true, 
+                        logging: false, 
+                        windowWidth: 1200,
+                        scrollX: 0,
+                        scrollY: 0
+                    },
+                    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' },
+                    pagebreak:    { mode: ['css', 'legacy'], avoid: ['.card', 'tr', '.header'] } 
+                };
 
-            html2pdf().set(opt).from(element).save().then(() => {
-                // Restore Styles After Download
-                element.style.width = origWidth;
-                element.style.maxWidth = origMaxWidth;
-                tableContainer.style.maxHeight = origMaxHeight;
-                tableContainer.style.overflow = origOverflow;
-                actionBtns.style.display = origDisplay;
-                btn.innerText = originalText;
-                btn.style.pointerEvents = "auto";
-            }).catch(err => {
-                console.error("PDF Export Error:", err);
-                element.style.width = origWidth;
-                element.style.maxWidth = origMaxWidth;
-                tableContainer.style.maxHeight = origMaxHeight;
-                tableContainer.style.overflow = origOverflow;
-                actionBtns.style.display = origDisplay;
-                btn.innerText = originalText;
-                btn.style.pointerEvents = "auto";
-                alert("Feil ved generering av PDF.");
-            });
+                html2pdf().set(opt).from(element).save().then(() => {
+                    // Restore Styles After Download Success
+                    element.style.margin = origMargin;
+                    element.style.width = origWidth;
+                    element.style.maxWidth = origMaxWidth;
+                    tableContainer.style.maxHeight = origMaxHeight;
+                    tableContainer.style.overflow = origOverflow;
+                    actionBtns.style.display = origDisplay;
+                    btn.innerText = originalText;
+                    btn.style.pointerEvents = "auto";
+                }).catch(err => {
+                    // Restore Styles After Download Failure
+                    console.error("PDF Export Error:", err);
+                    element.style.margin = origMargin;
+                    element.style.width = origWidth;
+                    element.style.maxWidth = origMaxWidth;
+                    tableContainer.style.maxHeight = origMaxHeight;
+                    tableContainer.style.overflow = origOverflow;
+                    actionBtns.style.display = origDisplay;
+                    btn.innerText = originalText;
+                    btn.style.pointerEvents = "auto";
+                    alert("Feil ved generering av PDF.");
+                });
+            }, 300); 
         }
 
         window.onload = init;
