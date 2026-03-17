@@ -72,7 +72,7 @@
         <div class="spinner" id="spinner"></div>
         <h3 style="color: #374151; margin: 0;">Loading Project Dashboard...</h3>
         <p id="loader-text" style="color: #6b7280; font-size: 14px; margin-top: 8px;">Initialiserer Trimble Connect Workspace...</p>
-        <p id="error-log"></p>
+        <p id="error-log" style="color: #ef4444; font-size: 14px; margin-top: 10px; font-weight: bold;"></p>
     </div>
 
     <div class="container" style="display: none;" id="main-content">
@@ -83,7 +83,7 @@
 
         <!-- Filter Controls -->
         <div class="filter-panel">
-            <div class="filter-group"><label>Assignee</label><select id="assigneeFilter" onchange="applyFilters()"><option value="All">All Assignees</option></select></div>
+            <div class="filter-group"><label>Assignee (Name)</label><select id="assigneeFilter" onchange="applyFilters()"><option value="All">All Assignees</option></select></div>
             <div class="filter-group"><label>Status</label><select id="statusFilter" onchange="applyFilters()"><option value="All">All Statuses</option></select></div>
             <div class="filter-group"><label>Priority</label><select id="priorityFilter" onchange="applyFilters()"><option value="All">All Priorities</option></select></div>
             <div class="filter-group"><label>Tags / Fag</label><select id="tagFilter" onchange="applyFilters()"><option value="All">All Tags</option></select></div>
@@ -125,20 +125,30 @@
 
     <script>
         // =========================================================================
-        // 🟢 MANUAL USER GROUP MAPPING (EXTRACTED FROM CSV) 🟢
-        // Trimble Connects sikkerhetssystem (CORS) blokkerer eksterne nettsider 
-        // fra å lese gruppelisten. Dette er den komplette Rosteren.
+        // 🟢 MANUAL USER GROUP MAPPING 🟢
         // =========================================================================
         const BRUKERGRUPPER = {
+            "arild.pedersen": "Vei",
+            "asbjorn.gjerding-smith": "Vei",
+            "eivind.randen": "Bane",
+            "fredrik.munch.starheim": "Vei",
+            "henrik.lien": "Prosjektledelse",
+            "ida.frojmark": "Bane",
+            "ingvild.odegard.rosbach": "Bane",
+            "jens.beckstrom": "Landskap",
+            "jon.havard.lien": "VA",
+            "jonas.ronglan.lindgard": "Geoteknikk",
+            "knut.johan.nygard": "Bane",
+            "kristoffer.bjornoy.weaver": "Bane",
+            "magnus.norgren": "BIM",
+            "oivind.skullerud": "Vei",
+            "siv.hansen.dawes": "Konstruksjon",
             "kristine.andersen-ranberg.huso": "Bane",
             "kaia.kristine.giltun": "Arkitekt",
-            "fredrik.munch.starheim": "Vei",
             "kristine.hove.rosok": "Vei",
             "henning.thauland": "Bane",
             "ivonne.verstappen": "Akustikk",
             "elin.rasten": "Akustikk",
-            "knut.johan.nygard": "Bane",
-            "jens.beckstrom": "Landskap",
             "gunhild.hennum": "Geoteknikk",
             "christian.mikkelsen": "Prosjektledelse",
             "elin.morgan": "Ingeniørgeologi",
@@ -147,27 +157,15 @@
             "eirin.lund": "Plan",
             "sofie.gustafson": "Miljø",
             "helga.sorby": "Plan",
-            "arild.pedersen": "Konstruksjon",
-            "ig": "Vei", // Inge Gunnes (ig@no)
-            "jon.havard.lien": "VA",
+            "ig": "Vei",
             "lorentz.reinertsen": "Hydrologi",
             "james.william.lancaster": "Hydrologi",
-            "asbjorn.gjerding-smith": "Konstruksjon",
             "kristoffer.rein": "Prosjektledelse",
             "inge.gunnes": "Vei",
             "simon.joback": "Geoteknikk",
-            "jonas.ronglan.lindgard": "Geoteknikk",
-            "ida.frojmark": "Landskap",
             "olav.eriksen": "Prosjektledelse",
-            "siv.hansen.dawes": "Konstruksjon",
             "hilda.ofsthus": "Landskap",
-            "kristoffer.bjornoy.weaver": "Bane",
-            "eivind.randen": "Bane",
-            "ludwig.wiese": "Bane",
-            "oivind.skullerud": "Vei",
-            "ingvild.odegard.rosbach": "Vei",
-            "magnus.norgren": "BIM",
-            "henrik.lien": "BIM"
+            "ludwig.wiese": "Bane"
         };
 
         const BCF_ENDPOINTS =[
@@ -307,8 +305,7 @@
                 }
 
                 // Determine Display Group EXCLUSIVELY for the Bar Chart
-                let displayGroup = assigneeName; // Default to their name
-                
+                let displayGroup = assigneeName; 
                 if (rawAssignee) {
                     if (BRUKERGRUPPER[lookupPrefix]) {
                         displayGroup = BRUKERGRUPPER[lookupPrefix];
@@ -465,74 +462,4 @@
             assigneeChart.data.labels = activeGroups;
             allStatuses.forEach((status, index) => { 
                 if(assigneeChart.data.datasets[index]) {
-                    assigneeChart.data.datasets[index].data = activeGroups.map(g => groupCounts[g][status]); 
-                }
-            });
-            assigneeChart.update();
-        }
-
-        function updateTable(data) {
-            const tbody = document.getElementById('tableBody');
-            document.getElementById('issueCount').textContent = data.length;
-            tbody.innerHTML = ''; 
-
-            if(data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 20px;">Ingen topics matcher filteret.</td></tr>';
-                return;
-            }
-
-            data.forEach(issue => {
-                const tr = document.createElement('tr');
-                const tagsHtml = issue.tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('');
-                
-                const topic3dUrl = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
-
-                tr.innerHTML = `
-                    <td>
-                        <a href="${topic3dUrl}" target="_blank" class="issue-link" title="Åpne i 3D Viewer">
-                            ${escapeHtml(issue.id)}
-                            <span class="link-icon">↗</span>
-                        </a>
-                    </td>
-                    <td>${escapeHtml(issue.assignee)}</td>
-                    <td><span class="badge" style="background-color: ${getColor(issue.status)}">${escapeHtml(issue.status)}</span></td>
-                    <td><span class="badge" style="background-color: ${getColor(issue.priority)}">${escapeHtml(issue.priority)}</span></td>
-                    <td>${tagsHtml}</td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
-        
-        function exportCSV() {
-            if (currentFilteredData.length === 0) { alert("Ingen data å eksportere."); return; }
-
-            const headers =["Title / ID", "Assignee", "Status", "Priority", "Tags", "Trimble 3D Link"];
-            const rows = currentFilteredData.map(issue => {
-                const tagsStr = issue.tags.join(" | ");
-                const link = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
-                return[
-                    `"${issue.id.replace(/"/g, '""')}"`,
-                    `"${issue.assignee.replace(/"/g, '""')}"`,
-                    `"${issue.status}"`,
-                    `"${issue.priority}"`,
-                    `"${tagsStr.replace(/"/g, '""')}"`,
-                    `"${link}"`
-                ].join(",");
-            });
-
-            const csvContent = "\uFEFF" +[headers.join(","), ...rows].join("\n");
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            
-            const linkEl = document.createElement("a");
-            linkEl.setAttribute("href", url);
-            linkEl.setAttribute("download", `BCF_Topics_Export.csv`);
-            document.body.appendChild(linkEl);
-            linkEl.click();
-            document.body.removeChild(linkEl);
-        }
-
-        window.onload = init;
-    </script>
-</body>
-</html>
+                    assigneeChart.data.da
