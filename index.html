@@ -26,7 +26,6 @@
         }
         .spinner { border: 4px solid #f3f4f6; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        #error-log { color: #ef4444; font-size: 14px; margin-top: 10px; max-width: 600px; word-wrap: break-word; font-weight: bold; }
 
         .filter-panel { background: #ffffff; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-end; }
         .filter-group { display: flex; flex-direction: column; flex: 1; min-width: 160px; }
@@ -84,7 +83,7 @@
 
         <!-- Filter Controls -->
         <div class="filter-panel">
-            <div class="filter-group"><label>Assignee (Name)</label><select id="assigneeFilter" onchange="applyFilters()"><option value="All">All Assignees</option></select></div>
+            <div class="filter-group"><label>Assignee</label><select id="assigneeFilter" onchange="applyFilters()"><option value="All">All Assignees</option></select></div>
             <div class="filter-group"><label>Status</label><select id="statusFilter" onchange="applyFilters()"><option value="All">All Statuses</option></select></div>
             <div class="filter-group"><label>Priority</label><select id="priorityFilter" onchange="applyFilters()"><option value="All">All Priorities</option></select></div>
             <div class="filter-group"><label>Tags / Fag</label><select id="tagFilter" onchange="applyFilters()"><option value="All">All Tags</option></select></div>
@@ -98,12 +97,13 @@
             <div class="card"><div class="card-title">Status Distribution</div><div class="chart-container"><canvas id="statusChart"></canvas></div></div>
             <div class="card"><div class="card-title">Priority Levels</div><div class="chart-container"><canvas id="priorityChart"></canvas></div></div>
             
+            <!-- Aggregates data by User Group ONLY -->
             <div class="card full-width">
                 <div class="card-title">
                     <span>Workload by User Group</span>
                     <span id="chart-filter-badge" class="active-filter-badge">Filter Active</span>
                 </div>
-                <div class="chart-container" style="height: 350px;"><canvas id="groupChart"></canvas></div>
+                <div class="chart-container" style="height: 350px;"><canvas id="assigneeChart"></canvas></div>
             </div>
             
             <div class="card full-width">
@@ -124,6 +124,52 @@
     </div>
 
     <script>
+        // =========================================================================
+        // 🟢 MANUAL USER GROUP MAPPING (EXTRACTED FROM CSV) 🟢
+        // Trimble Connects sikkerhetssystem (CORS) blokkerer eksterne nettsider 
+        // fra å lese gruppelisten. Dette er den komplette Rosteren.
+        // =========================================================================
+        const BRUKERGRUPPER = {
+            "kristine.andersen-ranberg.huso": "Bane",
+            "kaia.kristine.giltun": "Arkitekt",
+            "fredrik.munch.starheim": "Vei",
+            "kristine.hove.rosok": "Vei",
+            "henning.thauland": "Bane",
+            "ivonne.verstappen": "Akustikk",
+            "elin.rasten": "Akustikk",
+            "knut.johan.nygard": "Bane",
+            "jens.beckstrom": "Landskap",
+            "gunhild.hennum": "Geoteknikk",
+            "christian.mikkelsen": "Prosjektledelse",
+            "elin.morgan": "Ingeniørgeologi",
+            "ketil.soyland": "Prosjektledelse",
+            "markus.storkjorren.vetrhus": "Plan",
+            "eirin.lund": "Plan",
+            "sofie.gustafson": "Miljø",
+            "helga.sorby": "Plan",
+            "arild.pedersen": "Konstruksjon",
+            "ig": "Vei", // Inge Gunnes (ig@no)
+            "jon.havard.lien": "VA",
+            "lorentz.reinertsen": "Hydrologi",
+            "james.william.lancaster": "Hydrologi",
+            "asbjorn.gjerding-smith": "Konstruksjon",
+            "kristoffer.rein": "Prosjektledelse",
+            "inge.gunnes": "Vei",
+            "simon.joback": "Geoteknikk",
+            "jonas.ronglan.lindgard": "Geoteknikk",
+            "ida.frojmark": "Landskap",
+            "olav.eriksen": "Prosjektledelse",
+            "siv.hansen.dawes": "Konstruksjon",
+            "hilda.ofsthus": "Landskap",
+            "kristoffer.bjornoy.weaver": "Bane",
+            "eivind.randen": "Bane",
+            "ludwig.wiese": "Bane",
+            "oivind.skullerud": "Vei",
+            "ingvild.odegard.rosbach": "Vei",
+            "magnus.norgren": "BIM",
+            "henrik.lien": "BIM"
+        };
+
         const BCF_ENDPOINTS =[
             "https://open21.connect.trimble.com",
             "https://bcf.eu.connect.trimble.com",
@@ -132,16 +178,15 @@
         ];
 
         let API = null, accessToken = null, currentProjectId = null;
-        let initialDataFetched = false; // The absolute lock to prevent infinite loading loops
+        let initialDataFetched = false; 
         
-        let rawData = [];
+        let rawData =[];
         let currentFilteredData =[]; 
         
-        let statusChart = null, priorityChart = null, groupChart = null;
+        let statusChart = null, priorityChart = null, assigneeChart = null;
         let allAssignees =[], allStatuses =[], allPriorities =[], allTags =[];
         
-        let userToGroupMap = {};
-        let activeChartGroup = 'All'; // Tracks clicks on the Bar Chart
+        let activeChartGroup = 'All'; // Track clicks on the Workload Bar Chart
 
         const colorPalette = {
             'New': '#3b82f6', 'Open': '#3b82f6', 'Active': '#3b82f6',
@@ -187,7 +232,6 @@
             setLoaderText("Kobler til Trimble Connect Workspace...");
             try {
                 API = await TrimbleConnectWorkspace.connect(window.parent, (event, args) => {
-                    // Trimble fires this event multiple times. We ONLY care about the first one!
                     if (event === "extension.accessToken" && args.data && !initialDataFetched) {
                         accessToken = typeof args.data === "string" ? args.data : args.data.accessToken;
                         if (accessToken) startDataPipeline();
@@ -210,69 +254,16 @@
                         startDataPipeline();
                     }
                 }
-
-                // Failsafe: If Trimble API completely hangs for 10 seconds, force an error message
-                setTimeout(() => {
-                    if (!initialDataFetched) logError("Tidsavbrudd: Fikk ikke svar fra Trimble Connect API. Oppdater siden og prøv igjen.");
-                }, 10000);
-
             } catch (err) { logError("Feil ved tilkobling til Workspace: " + (err.message || err)); }
         }
 
         // ==========================================
-        // 2. LINEAR DATA PIPELINE (Prevents Loops)
+        // 2. FETCH BCF TOPICS
         // ==========================================
         async function startDataPipeline() {
-            if (initialDataFetched) return; // Absolutely ensures this only runs once
+            if (initialDataFetched) return; 
             initialDataFetched = true; 
 
-            try {
-                await fetchProjectGroupsNative(); // Step 1: Get Groups natively
-                await fetchBCFTopics();           // Step 2: Get Topics
-            } catch (e) {
-                logError("Feil under henting av data: " + e.message);
-            }
-        }
-
-        // ==========================================
-        // 3. FETCH USER GROUPS (DYNAMIC & CORS-FREE)
-        // ==========================================
-        async function fetchProjectGroupsNative() {
-            setLoaderText("Henter prosjektets brukergrupper...");
-            try {
-                // Get members natively using Workspace API
-                const members = await API.project.getMembers();
-                
-                if (members && Array.isArray(members)) {
-                    members.forEach(u => {
-                        const grps = u.groups || u.userGroups ||[];
-                        
-                        // Ignore "Norconsult"
-                        const validGrps = grps.map(g => (typeof g === 'object' ? (g.name || g.groupName) : g))
-                                              .filter(n => n && typeof n === 'string' && n.toLowerCase() !== 'norconsult');
-                        
-                        if (validGrps.length > 0) {
-                            const gName = validGrps.join(' & ');
-                            
-                            // Map all permutations of their name to the group
-                            const mapKey = (k) => { if (k) userToGroupMap[String(k).toLowerCase().trim()] = gName; };
-                            
-                            mapKey(u.email);
-                            if (u.email && u.email.includes('@')) mapKey(u.email.split('@')[0]);
-                            mapKey(`${u.firstName || ''} ${u.lastName || ''}`);
-                            if (u.name) mapKey(u.name);
-                        }
-                    });
-                }
-            } catch(e) {
-                console.warn("Kunne ikke hente grupper, ignorerer...", e);
-            }
-        }
-
-        // ==========================================
-        // 4. FETCH BCF TOPICS
-        // ==========================================
-        async function fetchBCFTopics() {
             setLoaderText("Henter BCF Topics fra server...");
             let fetchedArray = null;
 
@@ -289,13 +280,16 @@
                 } catch (err) {}
             }
 
-            if (!fetchedArray) throw new Error("Klarte ikke å hente topics fra BCF servere.");
+            if (!fetchedArray) {
+                logError("Klarte ikke å hente topics fra BCF servere.");
+                return;
+            }
             
             processDataSafely(fetchedArray);
         }
 
         // ==========================================
-        // 5. SAFE DATA PARSING & DASHBOARD INIT
+        // 3. MAP DATA TO DASHBOARD
         // ==========================================
         function processDataSafely(bcfArray) {
             setLoaderText("Prosesserer og bygger dashboard...");
@@ -307,17 +301,20 @@
                 let lookupEmail = rawAssignee.toLowerCase().trim();
                 let lookupPrefix = lookupEmail.includes('@') ? lookupEmail.split('@')[0] : lookupEmail;
 
-                // Display formatting for individual username
+                // Format display name for Table (e.g. henrik.lien)
                 if (assigneeName.includes('@')) {
                     assigneeName = assigneeName.split('@')[0];
                 }
 
-                // Display formatting for Group (Bar Chart)
-                let displayGroup = assigneeName; 
+                // Determine Display Group EXCLUSIVELY for the Bar Chart
+                let displayGroup = assigneeName; // Default to their name
+                
                 if (rawAssignee) {
-                    if (userToGroupMap[lookupEmail]) displayGroup = userToGroupMap[lookupEmail];
-                    else if (userToGroupMap[lookupPrefix]) displayGroup = userToGroupMap[lookupPrefix];
-                    else displayGroup = 'Uten gruppe';
+                    if (BRUKERGRUPPER[lookupPrefix]) {
+                        displayGroup = BRUKERGRUPPER[lookupPrefix];
+                    } else if (BRUKERGRUPPER[lookupEmail]) {
+                        displayGroup = BRUKERGRUPPER[lookupEmail];
+                    }
                 } else {
                     displayGroup = 'Ikke tildelt';
                 }
@@ -364,7 +361,7 @@
         function initCharts() {
             if(statusChart) statusChart.destroy();
             if(priorityChart) priorityChart.destroy();
-            if(groupChart) groupChart.destroy();
+            if(assigneeChart) assigneeChart.destroy();
 
             const chartOptions = (filterId) => ({
                 responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } },
@@ -390,7 +387,7 @@
             });
 
             const datasets = allStatuses.map(status => ({ label: status, data:[], backgroundColor: getColor(status) }));
-            groupChart = new Chart(document.getElementById('groupChart').getContext('2d'), {
+            assigneeChart = new Chart(document.getElementById('assigneeChart').getContext('2d'), {
                 type: 'bar', data: { labels:[], datasets: datasets },
                 options: {
                     responsive: true, maintainAspectRatio: false,
@@ -430,7 +427,7 @@
 
             // Show active badge if Bar Chart group filter is engaged
             document.getElementById('chart-filter-badge').style.display = (activeChartGroup !== 'All') ? 'inline-block' : 'none';
-            if (activeChartGroup !== 'All') document.getElementById('chart-filter-badge').innerText = `Filter: ${activeChartGroup}`;
+            if (activeChartGroup !== 'All') document.getElementById('chart-filter-badge').innerText = `Filter: ${activeChartGroup} (Click chart to clear)`;
 
             currentFilteredData = rawData.filter(issue => {
                 return (filters.assignee === 'All' || issue.assignee === filters.assignee) &&
@@ -447,6 +444,7 @@
         function updateCharts(data) {
             let statusCounts = {}, priorityCounts = {}, groupCounts = {};
             
+            // Bar Chart Uses User Groups
             let activeGroups =[...new Set(data.map(i => i.displayGroup))].sort();
 
             allStatuses.forEach(s => statusCounts[s] = 0);
@@ -464,13 +462,13 @@
             statusChart.data.datasets[0].data = allStatuses.map(s => statusCounts[s]); statusChart.update();
             priorityChart.data.datasets[0].data = allPriorities.map(p => priorityCounts[p]); priorityChart.update();
 
-            groupChart.data.labels = activeGroups;
+            assigneeChart.data.labels = activeGroups;
             allStatuses.forEach((status, index) => { 
-                if(groupChart.data.datasets[index]) {
-                    groupChart.data.datasets[index].data = activeGroups.map(g => groupCounts[g][status]); 
+                if(assigneeChart.data.datasets[index]) {
+                    assigneeChart.data.datasets[index].data = activeGroups.map(g => groupCounts[g][status]); 
                 }
             });
-            groupChart.update();
+            assigneeChart.update();
         }
 
         function updateTable(data) {
