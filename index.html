@@ -9,6 +9,8 @@
     <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- HTML2PDF.js for PDF Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     
     <style>
         body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f9fafb; margin: 0; padding: 20px; color: #1f2937; }
@@ -26,7 +28,6 @@
         }
         .spinner { border: 4px solid #f3f4f6; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        #error-log { color: #ef4444; font-size: 14px; margin-top: 10px; max-width: 600px; word-wrap: break-word; font-weight: bold; }
 
         .filter-panel { background: #ffffff; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-end; }
         .filter-group { display: flex; flex-direction: column; flex: 1; min-width: 160px; }
@@ -40,6 +41,9 @@
         
         .csv-btn { background-color: #10b981; color: white; border: none; border-radius: 6px; padding: 0 20px; height: 42px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: 0.2s; }
         .csv-btn:hover { background-color: #059669; }
+
+        .pdf-btn { background-color: #3b82f6; color: white; border: none; border-radius: 6px; padding: 0 20px; height: 42px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: 0.2s; }
+        .pdf-btn:hover { background-color: #2563eb; }
 
         .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; flex: 1; }
         .card { background: #ffffff; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); padding: 20px; }
@@ -88,7 +92,9 @@
             <div class="filter-group"><label>Status</label><select id="statusFilter" onchange="applyFilters()"><option value="All">All Statuses</option></select></div>
             <div class="filter-group"><label>Priority</label><select id="priorityFilter" onchange="applyFilters()"><option value="All">All Priorities</option></select></div>
             <div class="filter-group"><label>Tags / Fag</label><select id="tagFilter" onchange="applyFilters()"><option value="All">All Tags</option></select></div>
-            <div class="filter-group button-group">
+            
+            <div class="filter-group button-group" id="action-buttons">
+                <button id="pdf-btn" class="pdf-btn" onclick="exportPDF()">Export PDF</button>
                 <button class="csv-btn" onclick="exportCSV()">Export CSV</button>
                 <button class="reset-btn" onclick="resetFilters()">Reset Filters</button>
             </div>
@@ -109,7 +115,7 @@
             
             <div class="card full-width">
                 <div class="card-title">Matching Issues (<span id="issueCount">0</span>)</div>
-                <div class="table-container">
+                <div class="table-container" id="printable-table">
                     <table id="issueTable">
                         <thead><tr><th>Topic Title / Link</th><th>Assignee</th><th>Status</th><th>Priority</th><th>Tags</th></tr></thead>
                         <tbody id="tableBody"></tbody>
@@ -127,8 +133,6 @@
     <script>
         // =========================================================================
         // 🟢 MANUAL USER GROUP MAPPING 🟢
-        // Trimble Connects sikkerhetssystem (CORS) blokkerer eksterne nettsider 
-        // fra å lese gruppelisten. Dette er den komplette Rosteren.
         // =========================================================================
         const BRUKERGRUPPER = {
             "kristine.andersen-ranberg.huso": "Bane",
@@ -149,7 +153,7 @@
             "sofie.gustafson": "Miljø",
             "helga.sorby": "Plan",
             "arild.pedersen": "Konstruksjon",
-            "ig": "Vei", // Inge Gunnes (ig@no)
+            "ig": "Vei", 
             "jon.havard.lien": "VA",
             "lorentz.reinertsen": "Hydrologi",
             "james.william.lancaster": "Hydrologi",
@@ -179,7 +183,7 @@
         ];
 
         let API = null, accessToken = null, currentProjectId = null;
-        let isFetching = false; 
+        let initialDataFetched = false; 
         
         let rawData =[];
         let currentFilteredData =[]; 
@@ -187,7 +191,7 @@
         let statusChart = null, priorityChart = null, assigneeChart = null;
         let allAssignees =[], allStatuses =[], allPriorities =[], allTags =[];
         
-        let activeChartGroup = 'All'; // Track clicks on the Workload Bar Chart
+        let activeChartGroup = 'All'; 
 
         const colorPalette = {
             'New': '#3b82f6', 'Open': '#3b82f6', 'Active': '#3b82f6',
@@ -233,8 +237,9 @@
             setLoaderText("Kobler til Trimble Connect Workspace...");
             try {
                 API = await TrimbleConnectWorkspace.connect(window.parent, (event, args) => {
-                    if (event === "extension.accessToken" && args.data) {
-                        handleAccessTokenPayload(args.data);
+                    if (event === "extension.accessToken" && args.data && !initialDataFetched) {
+                        accessToken = typeof args.data === "string" ? args.data : args.data.accessToken;
+                        if (accessToken) startDataPipeline();
                     }
                 });
 
@@ -244,33 +249,26 @@
 
                 setLoaderText("Ber om tilgang (accessToken)...");
                 const permissionResult = await API.extension.requestPermission("accesstoken");
-                handleAccessTokenPayload(permissionResult);
                 
-                // Fallback timeout in case Trimble API hangs completely
-                setTimeout(() => {
-                    if (!isFetching) logError("Tidsavbrudd: Fikk ikke svar fra Trimble API. Oppdater siden (F5) og prøv igjen.");
-                }, 10000);
-
+                if (!initialDataFetched) {
+                    if (typeof permissionResult === "string" && permissionResult !== "pending" && permissionResult !== "denied") {
+                        accessToken = permissionResult;
+                        startDataPipeline();
+                    } else if (typeof permissionResult === "object" && permissionResult.accessToken) {
+                        accessToken = permissionResult.accessToken;
+                        startDataPipeline();
+                    }
+                }
             } catch (err) { logError("Feil ved tilkobling til Workspace: " + (err.message || err)); }
-        }
-
-        function handleAccessTokenPayload(payload) {
-            if (!payload || payload === "pending" || payload === "denied") return;
-            
-            if (typeof payload === "string") accessToken = payload;
-            else if (typeof payload === "object" && payload.accessToken) accessToken = payload.accessToken;
-            
-            // Absolutely ensure we only fetch data ONCE
-            if (accessToken && !isFetching) {
-                isFetching = true;
-                fetchTopicsData();
-            }
         }
 
         // ==========================================
         // 2. FETCH BCF TOPICS
         // ==========================================
-        async function fetchTopicsData() {
+        async function startDataPipeline() {
+            if (initialDataFetched) return; 
+            initialDataFetched = true; 
+
             setLoaderText("Henter BCF Topics fra server...");
             let fetchedArray = null;
 
@@ -330,8 +328,8 @@
                 return {
                     id: topic.title || topic.topic_title || guid || 'Uten tittel',
                     guid: guid,
-                    assignee: assigneeName,      // Kept for Table & Filters
-                    displayGroup: displayGroup,  // Used for Bar Chart Grouping
+                    assignee: assigneeName,      
+                    displayGroup: displayGroup,  
                     status: topic.topic_status || topic.status || 'Open',
                     priority: topic.priority || 'Normal',
                     tags: extractTags(topic)
@@ -401,7 +399,6 @@
                     scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } },
                     plugins: { tooltip: { mode: 'index', intersect: false } },
                     onClick: (event, elements, chart) => {
-                        // When a User Group bar is clicked, toggle the filter!
                         if (elements.length > 0) {
                             const clickedGroup = chart.data.labels[elements[0].index];
                             activeChartGroup = (activeChartGroup === clickedGroup) ? 'All' : clickedGroup;
@@ -414,7 +411,7 @@
         }
 
         function resetFilters() {['assigneeFilter', 'statusFilter', 'priorityFilter', 'tagFilter'].forEach(id => document.getElementById(id).value = 'All'); 
-            activeChartGroup = 'All'; // Reset Bar Chart filter
+            activeChartGroup = 'All'; 
             applyFilters(); 
         }
 
@@ -441,7 +438,7 @@
                        (filters.status === 'All' || issue.status === filters.status) &&
                        (filters.priority === 'All' || issue.priority === filters.priority) &&
                        (filters.tag === 'All' || issue.tags.includes(filters.tag)) &&
-                       (activeChartGroup === 'All' || issue.displayGroup === activeChartGroup); // Group Filter Applied!
+                       (activeChartGroup === 'All' || issue.displayGroup === activeChartGroup);
             });
 
             updateCharts(currentFilteredData);
@@ -450,8 +447,6 @@
 
         function updateCharts(data) {
             let statusCounts = {}, priorityCounts = {}, groupCounts = {};
-            
-            // Bar Chart Uses User Groups
             let activeGroups =[...new Set(data.map(i => i.displayGroup))].sort();
 
             allStatuses.forEach(s => statusCounts[s] = 0);
@@ -496,7 +491,7 @@
 
                 tr.innerHTML = `
                     <td>
-                        <a href="${topic3dUrl}" target="_blank" class="issue-link" title="Åpne i 3D Viewer (Klikk på miniatyrbildet i Topics panelet for å laste modellene)">
+                        <a href="${topic3dUrl}" target="_blank" class="issue-link" title="Åpne i 3D Viewer">
                             ${escapeHtml(issue.id)}
                             <span class="link-icon">↗</span>
                         </a>
@@ -511,7 +506,7 @@
         }
         
         // ==========================================
-        // 5. IMPROVED CSV EXPORT (EUROPEAN FORMAT)
+        // 4. EXPORT FUNCTIONS (CSV & PDF)
         // ==========================================
         function exportCSV() {
             if (currentFilteredData.length === 0) { alert("Ingen data å eksportere."); return; }
@@ -523,7 +518,6 @@
             const rows = currentFilteredData.map(issue => {
                 const tagsStr = issue.tags.join(", "); 
                 const link = `https://web.connect.trimble.com/projects/${currentProjectId}/viewer/3d?topicId=${issue.guid}`;
-                
                 const escape = (text) => `"${String(text).replace(/"/g, '""')}"`;
 
                 return[
@@ -537,13 +531,10 @@
                 ].join(separator);
             });
 
-            // \uFEFF ensures Excel reads UTF-8 characters (æ, ø, å) correctly
             const csvContent = "\uFEFF" + [headers.join(separator), ...rows].join("\n");
-            
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             
-            // Add current date to the file name
             const dateStr = new Date().toISOString().split('T')[0];
             const filename = `BCF_Topics_Export_${dateStr}.csv`;
 
@@ -553,6 +544,60 @@
             document.body.appendChild(linkEl);
             linkEl.click();
             document.body.removeChild(linkEl);
+        }
+
+        function exportPDF() {
+            if (currentFilteredData.length === 0) { 
+                alert("Ingen data å eksportere."); 
+                return; 
+            }
+
+            const btn = document.getElementById('pdf-btn');
+            const originalText = btn.innerText;
+            btn.innerText = "Genererer PDF...";
+            btn.style.pointerEvents = "none";
+
+            const element = document.getElementById('main-content');
+            const tableContainer = document.getElementById('printable-table');
+            const actionBtns = document.getElementById('action-buttons');
+
+            // Save original styles
+            const origMaxHeight = tableContainer.style.maxHeight;
+            const origOverflow = tableContainer.style.overflow;
+            const origDisplay = actionBtns.style.display;
+
+            // PREPARE FOR PDF CAPTURE: Expand table and hide buttons
+            tableContainer.style.maxHeight = 'none';
+            tableContainer.style.overflow = 'visible';
+            actionBtns.style.display = 'none'; 
+
+            const dateStr = new Date().toISOString().split('T')[0];
+            
+            const opt = {
+                margin:       10, // 10mm margin
+                filename:     `BCF_Topics_Dashboard_${dateStr}.pdf`,
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, useCORS: true, logging: false },
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' },
+                pagebreak:    { mode: ['css', 'legacy'], avoid: 'tr' } // Tries to prevent cutting rows in half
+            };
+
+            html2pdf().set(opt).from(element).save().then(() => {
+                // Restore Styles After Download
+                tableContainer.style.maxHeight = origMaxHeight;
+                tableContainer.style.overflow = origOverflow;
+                actionBtns.style.display = origDisplay;
+                btn.innerText = originalText;
+                btn.style.pointerEvents = "auto";
+            }).catch(err => {
+                console.error("PDF Export Error:", err);
+                tableContainer.style.maxHeight = origMaxHeight;
+                tableContainer.style.overflow = origOverflow;
+                actionBtns.style.display = origDisplay;
+                btn.innerText = originalText;
+                btn.style.pointerEvents = "auto";
+                alert("Feil ved generering av PDF.");
+            });
         }
 
         window.onload = init;
