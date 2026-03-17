@@ -46,10 +46,7 @@
         .pdf-btn:hover { background-color: #2563eb; }
 
         .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; flex: 1; }
-        
-        /* IMPORTANT: Prevent charts and rows from being cut in half during PDF export */
         .card { background: #ffffff; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); padding: 20px; page-break-inside: avoid; break-inside: avoid; }
-        
         .card-title { font-size: 16px; font-weight: 600; margin-bottom: 15px; color: #374151; border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
         .active-filter-badge { background-color: #3b82f6; color: white; font-size: 11px; padding: 3px 8px; border-radius: 10px; display: none; }
         .full-width { grid-column: span 2; }
@@ -57,7 +54,7 @@
 
         .table-container { overflow-x: auto; max-height: 400px; }
         table { width: 100%; border-collapse: collapse; text-align: left; }
-        tr { page-break-inside: avoid; break-inside: avoid; }
+        tr { page-break-inside: avoid; break-inside: avoid; } 
         th, td { padding: 12px 15px; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
         th { background-color: #f3f4f6; position: sticky; top: 0; z-index: 10; }
         .badge { padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: white; white-space: nowrap; }
@@ -72,6 +69,17 @@
         .footer { text-align: center; padding: 20px 0; color: #9ca3af; font-size: 13px; font-weight: 500; margin-top: auto; }
 
         @media (max-width: 768px) { .dashboard { grid-template-columns: 1fr; } .full-width { grid-column: span 1; } }
+
+        /* =========================================================
+           PDF PRINT MODE (Expands table, hides buttons)
+           ========================================================= */
+        body.pdf-mode .table-container {
+            max-height: none !important;
+            overflow: visible !important;
+        }
+        body.pdf-mode #action-buttons {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
@@ -81,6 +89,7 @@
         <div class="spinner" id="spinner"></div>
         <h3 style="color: #374151; margin: 0;">Loading Project Dashboard...</h3>
         <p id="loader-text" style="color: #6b7280; font-size: 14px; margin-top: 8px;">Initialiserer Trimble Connect Workspace...</p>
+        <p id="error-log" style="color: #ef4444; font-size: 14px; margin-top: 10px; font-weight: bold;"></p>
     </div>
 
     <div class="container" id="main-content" style="display: none;">
@@ -107,6 +116,7 @@
             <div class="card"><div class="card-title">Status Distribution</div><div class="chart-container"><canvas id="statusChart"></canvas></div></div>
             <div class="card"><div class="card-title">Priority Levels</div><div class="chart-container"><canvas id="priorityChart"></canvas></div></div>
             
+            <!-- Aggregates data by User Group ONLY -->
             <div class="card full-width">
                 <div class="card-title">
                     <span>Workload by User Group</span>
@@ -339,7 +349,7 @@
             populateSelect('tagFilter', allTags);
 
             document.getElementById('loader').style.display = 'none';
-            document.getElementById('main-content').style.display = 'block';
+            document.getElementById('main-content').style.display = 'flex';
 
             initCharts();
             applyFilters();
@@ -524,7 +534,7 @@
         }
 
         // ==========================================
-        // SMART PDF EXPORT (Fixes Edge-Cropping Bug)
+        // DYNAMIC PDF EXPORT
         // ==========================================
         function exportPDF() {
             if (currentFilteredData.length === 0) { 
@@ -537,77 +547,35 @@
             btn.innerText = "Genererer PDF...";
             btn.style.pointerEvents = "none";
 
+            // Turn on PDF mode to expand table and hide buttons without forcing strict widths
+            document.body.classList.add('pdf-mode');
+
             const element = document.getElementById('main-content');
-            const tableContainer = document.getElementById('printable-table');
-            const actionBtns = document.getElementById('action-buttons');
+            const dateStr = new Date().toISOString().split('T')[0];
 
-            // Save original styles
-            const origMargin = element.style.margin;
-            const origWidth = element.style.width;
-            const origMaxWidth = element.style.maxWidth;
-            const origMaxHeight = tableContainer.style.maxHeight;
-            const origOverflow = tableContainer.style.overflow;
-            const origDisplay = actionBtns.style.display;
-
-            // Scroll to the absolute top to avoid html2canvas clipping bugs
-            window.scrollTo(0, 0);
-
-            // PREPARE FOR PDF CAPTURE: 
-            // 1. Remove auto margin so the canvas anchors to the absolute left edge (fixes crop)
-            // 2. Lock width to exactly 1200px
-            element.style.margin = '0';
-            element.style.width = '1200px';
-            element.style.maxWidth = '1200px';
-            
-            // Expand the table and hide buttons
-            tableContainer.style.maxHeight = 'none';
-            tableContainer.style.overflow = 'visible';
-            actionBtns.style.display = 'none'; 
-
-            // Give the browser 300ms to repaint the expanded layout before taking the picture
             setTimeout(() => {
-                const dateStr = new Date().toISOString().split('T')[0];
-                
                 const opt = {
-                    margin:       [10, 10, 10, 10], // Margins in mm
+                    margin:       10, 
                     filename:     `BCF_Topics_Dashboard_${dateStr}.pdf`,
-                    image:        { type: 'jpeg', quality: 1.0 },
-                    html2canvas:  { 
-                        scale: 2, 
-                        useCORS: true, 
-                        logging: false, 
-                        windowWidth: 1200,
-                        scrollX: 0,
-                        scrollY: 0
-                    },
-                    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' },
+                    image:        { type: 'jpeg', quality: 0.98 },
+                    html2canvas:  { scale: 2, useCORS: true },
+                    // Use A3 Landscape so the wide dashboard naturally fits without cropping
+                    jsPDF:        { unit: 'mm', format: 'a3', orientation: 'landscape' },
                     pagebreak:    { mode: ['css', 'legacy'], avoid: ['.card', 'tr', '.header'] } 
                 };
 
                 html2pdf().set(opt).from(element).save().then(() => {
-                    // Restore Styles After Download Success
-                    element.style.margin = origMargin;
-                    element.style.width = origWidth;
-                    element.style.maxWidth = origMaxWidth;
-                    tableContainer.style.maxHeight = origMaxHeight;
-                    tableContainer.style.overflow = origOverflow;
-                    actionBtns.style.display = origDisplay;
+                    document.body.classList.remove('pdf-mode');
                     btn.innerText = originalText;
                     btn.style.pointerEvents = "auto";
                 }).catch(err => {
-                    // Restore Styles After Download Failure
                     console.error("PDF Export Error:", err);
-                    element.style.margin = origMargin;
-                    element.style.width = origWidth;
-                    element.style.maxWidth = origMaxWidth;
-                    tableContainer.style.maxHeight = origMaxHeight;
-                    tableContainer.style.overflow = origOverflow;
-                    actionBtns.style.display = origDisplay;
+                    document.body.classList.remove('pdf-mode');
                     btn.innerText = originalText;
                     btn.style.pointerEvents = "auto";
                     alert("Feil ved generering av PDF.");
                 });
-            }, 300); 
+            }, 500); 
         }
 
         window.onload = init;
